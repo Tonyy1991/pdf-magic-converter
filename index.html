@@ -894,7 +894,9 @@ async function renderPageForAi(page) {
 // gemini-flash-latest = alias ชี้รุ่นล่าสุดเสมอ + สำรอง 2 รุ่น (โควตาฟรีนับแยกรายโมเดล)
 const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
 // เซิร์ฟเวอร์กลาง: ไม่มี key ส่วนตัวก็ใช้ AI OCR ได้ (key เก็บฝั่งเซิร์ฟเวอร์ ปลอดภัย)
-const AI_PROXY = 'https://pdf-magic-converter-production.up.railway.app';
+// ถ้าเปิดจากโดเมน Railway อยู่แล้ว ใช้ same-origin — โดเมนเปลี่ยนชื่อก็ไม่พัง
+const AI_PROXY = location.hostname.endsWith('.up.railway.app')
+  ? '' : 'https://pdf-magic-converter.up.railway.app';
 const AI_PROMPT = `Transcribe this scanned Thai document page accurately.
 Return ONLY JSON: {"blocks":[{"cols":["text"],"align":"left|center|right","indent":true|false}]}
 Rules:

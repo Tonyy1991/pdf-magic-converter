@@ -10,6 +10,7 @@ const MODELS = ['gemini-flash-latest', 'gemini-3.5-flash', 'gemini-3.1-flash-lit
 const ALLOW_ORIGINS = [
   'https://tonyy1991.github.io',
   'https://pdf-magic-converter-production.up.railway.app',
+  'https://pdf-magic-converter.up.railway.app',
   'http://localhost:8017',
 ];
 const MIME = {
