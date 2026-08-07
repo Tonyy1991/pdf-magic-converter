@@ -618,11 +618,11 @@
         <button type="button" class="seg-btn" data-mode="full"
           data-tip="📷 บังคับใช้ OCR เก็บทุกตัวอักษรที่อ่านได้ แม้ความมั่นใจต่ำ — เหมาะกับภาพถ่าย/สแกนคุณภาพต่ำ ลายมือ หรือเมื่อโหมดสะอาดตัดข้อความที่ต้องการหายไป">📷 OCR เก็บหมด</button>
         <button type="button" class="seg-btn" data-mode="ai"
-          data-tip="✨ ฉลาดที่สุด: ส่งภาพหน้ากระดาษให้ Google Gemini AI อ่าน เข้าใจภาษาไทย ~99% จัดย่อหน้า/ตารางให้เอง แยกตรายางออกอัตโนมัติ — เหมาะกับเอกสารสำคัญที่ต้องการความแม่นสูงสุด (ต้องมี API key ฟรีจาก Google)">✨ AI OCR (Gemini)</button>
+          data-tip="✨ ฉลาดที่สุด: ส่งภาพหน้ากระดาษให้ Google Gemini AI อ่าน เข้าใจภาษาไทย ~99% จัดย่อหน้า/ตารางให้เอง แยกตรายางออกอัตโนมัติ — กดใช้ได้เลยไม่ต้องตั้งค่า (ระบบมีเซิร์ฟเวอร์กลางให้ หรือใส่ key ส่วนตัวก็ได้)">✨ AI OCR (Gemini)</button>
       </div>
       <div class="ai-key-row" id="aiKeyRow">
         <input type="password" class="ai-key-input" id="aiKeyInput"
-          placeholder="วาง Gemini API key (ใส่หลายตัวคั่นด้วยคอมมาเพื่อสลับอัตโนมัติ — เก็บในเครื่องคุณเท่านั้น)" autocomplete="off">
+          placeholder="ไม่บังคับ — ปล่อยว่างเพื่อใช้เซิร์ฟเวอร์กลาง หรือวาง key ส่วนตัว (หลายตัวคั่นคอมมา)" autocomplete="off">
         <button type="button" class="ai-key-save" id="aiKeySave">💾 บันทึก</button>
         <a class="ai-key-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">
           🔑 ขอ key ฟรีที่ aistudio.google.com</a>
@@ -891,8 +891,10 @@ async function renderPageForAi(page) {
   return canvas.toDataURL('image/jpeg', 0.85).split(',')[1]; // base64 ล้วน
 }
 
-// gemini-flash-latest = alias ชี้รุ่นล่าสุดเสมอ (กันโมเดลเก่าถูกปลด) + สำรองอีก 2 รุ่น
-const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-2.5-flash'];
+// gemini-flash-latest = alias ชี้รุ่นล่าสุดเสมอ + สำรอง 2 รุ่น (โควตาฟรีนับแยกรายโมเดล)
+const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+// เซิร์ฟเวอร์กลาง: ไม่มี key ส่วนตัวก็ใช้ AI OCR ได้ (key เก็บฝั่งเซิร์ฟเวอร์ ปลอดภัย)
+const AI_PROXY = 'https://pdf-magic-converter-production.up.railway.app';
 const AI_PROMPT = `Transcribe this scanned Thai document page accurately.
 Return ONLY JSON: {"blocks":[{"cols":["text"],"align":"left|center|right","indent":true|false}]}
 Rules:
@@ -934,8 +936,8 @@ async function geminiRecognize(b64jpeg, apiKeys) {
         break; // key นี้ใช้ไม่ได้ → สลับ key ถัดไป
       }
       if (res.status === 429) {
-        lastErr = new Error('key เต็มโควตาฟรีชั่วคราว — รอสักครู่แล้วลองใหม่');
-        break; // key นี้เต็มโควตา → สลับ key ถัดไป (redundancy)
+        lastErr = new Error('โควตาฟรีเต็มชั่วคราวทุกโมเดล — รอสักครู่แล้วลองใหม่');
+        continue; // โควตานับแยกรายโมเดล → ลองโมเดลถัดไปก่อน แล้วค่อยสลับ key
       }
       if (!res.ok) { lastErr = new Error(`Gemini ตอบกลับผิดพลาด (HTTP ${res.status})`); continue; }
       const data = await res.json();
@@ -961,11 +963,25 @@ function flattenAiBlocks(x) {
   return [];
 }
 
-async function extractPdfAi(file, onProgress) {
-  const apiKeys = getAiKeys();
-  if (!apiKeys.length) {
-    throw new Error('โหมด AI OCR ต้องใส่ Gemini API key ก่อน — ขอฟรีได้ที่ aistudio.google.com/apikey แล้วกดบันทึก');
+/* ไม่มี key ส่วนตัว → ใช้เซิร์ฟเวอร์กลาง (key อยู่ฝั่งเซิร์ฟเวอร์ ไม่โผล่ในหน้าเว็บ) */
+async function proxyRecognize(b64jpeg) {
+  let res;
+  try {
+    res = await fetch(`${AI_PROXY}/api/ocr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: b64jpeg }),
+    });
+  } catch {
+    throw new Error('เชื่อมต่อเซิร์ฟเวอร์ AI ไม่ได้ — ตรวจสอบอินเทอร์เน็ต หรือใส่ Gemini key ส่วนตัวแทน');
   }
+  if (res.status === 429) throw new Error('โควตากลางเต็มชั่วคราว — รอสักครู่ หรือใส่ Gemini key ส่วนตัว (ฟรีที่ aistudio.google.com/apikey)');
+  if (!res.ok) throw new Error(`เซิร์ฟเวอร์ AI ขัดข้อง (HTTP ${res.status}) — ลองใหม่ หรือใส่ key ส่วนตัว`);
+  return await res.json();
+}
+
+async function extractPdfAi(file, onProgress) {
+  const apiKeys = getAiKeys(); // มี key ส่วนตัว = เรียก Gemini ตรง, ไม่มี = ผ่านเซิร์ฟเวอร์กลาง
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
   const pages = [];
@@ -974,7 +990,9 @@ async function extractPdfAi(file, onProgress) {
       `✨ AI OCR หน้า ${p} / ${pdf.numPages} — Gemini กำลังอ่าน…`);
     const page = await pdf.getPage(p);
     const b64 = await renderPageForAi(page);
-    const result = await geminiRecognize(b64, apiKeys);
+    const result = apiKeys.length
+      ? await geminiRecognize(b64, apiKeys)
+      : await proxyRecognize(b64);
     const rows = flattenAiBlocks(result).map(b => {
       const cols = (Array.isArray(b.cols) ? b.cols : [String(b.cols || '')])
         .map(c => String(c).trim()).filter(Boolean);
