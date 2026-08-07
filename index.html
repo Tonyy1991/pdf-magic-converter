@@ -415,6 +415,35 @@
     margin-left: 6px; vertical-align: middle;
   }
 
+  /* ช่องกรอก Gemini API key (โชว์เฉพาะโหมด AI) */
+  .ai-key-row {
+    display: none; width: 100%;
+    flex-wrap: wrap; gap: 8px; align-items: center;
+    margin-top: 10px; padding: 12px;
+    border: 1.5px dashed var(--glass-border); border-radius: 12px;
+    background: var(--glass);
+  }
+  .ai-key-row.show { display: flex; animation: fade-up 0.35s ease both; }
+  .ai-key-input {
+    flex: 1; min-width: 200px; padding: 10px 12px;
+    border-radius: 10px; border: 1.5px solid var(--glass-border);
+    background: var(--glass-hover); color: var(--text);
+    font-family: inherit; font-size: 0.85rem;
+  }
+  .ai-key-input:focus { outline: none; border-color: var(--accent2); }
+  .ai-key-save {
+    padding: 10px 16px; border-radius: 10px; border: none;
+    background: linear-gradient(135deg, var(--accent1), var(--accent2));
+    color: white; font-family: inherit; font-size: 0.85rem; font-weight: 500;
+    cursor: pointer; transition: all 0.25s;
+  }
+  .ai-key-save:hover { transform: translateY(-2px); }
+  .ai-key-link {
+    font-size: 0.78rem; color: var(--accent2); text-decoration: none;
+    font-weight: 400;
+  }
+  .ai-key-link:hover { text-decoration: underline; }
+
   .error-box {
     display: none; margin-top: 16px; padding: 14px 18px;
     border-radius: 14px; border: 1px solid color-mix(in srgb, var(--accent3) 50%, transparent);
@@ -588,6 +617,15 @@
           data-tip="🧼 บังคับใช้ OCR พร้อมคัดกรอง ตัดตรายาง ลายเซ็น รอยหมึก โลโก้ทิ้ง เหลือเนื้อความหลักล้วน ๆ — เหมาะกับหนังสือราชการ เอกสารสแกนที่มีตราประทับ">🧼 OCR สะอาด</button>
         <button type="button" class="seg-btn" data-mode="full"
           data-tip="📷 บังคับใช้ OCR เก็บทุกตัวอักษรที่อ่านได้ แม้ความมั่นใจต่ำ — เหมาะกับภาพถ่าย/สแกนคุณภาพต่ำ ลายมือ หรือเมื่อโหมดสะอาดตัดข้อความที่ต้องการหายไป">📷 OCR เก็บหมด</button>
+        <button type="button" class="seg-btn" data-mode="ai"
+          data-tip="✨ ฉลาดที่สุด: ส่งภาพหน้ากระดาษให้ Google Gemini AI อ่าน เข้าใจภาษาไทย ~99% จัดย่อหน้า/ตารางให้เอง แยกตรายางออกอัตโนมัติ — เหมาะกับเอกสารสำคัญที่ต้องการความแม่นสูงสุด (ต้องมี API key ฟรีจาก Google)">✨ AI OCR (Gemini)</button>
+      </div>
+      <div class="ai-key-row" id="aiKeyRow">
+        <input type="password" class="ai-key-input" id="aiKeyInput"
+          placeholder="วาง Gemini API key ที่นี่ (เก็บในเครื่องคุณเท่านั้น)" autocomplete="off">
+        <button type="button" class="ai-key-save" id="aiKeySave">💾 บันทึก</button>
+        <a class="ai-key-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">
+          🔑 ขอ key ฟรีที่ aistudio.google.com</a>
       </div>
     </div>
     <button class="convert-btn" id="convertBtn" disabled>
@@ -822,6 +860,108 @@ function setOcrMode(mode) {
   });
   // มือถือไม่มี hover → แสดงคำอธิบายของโหมดที่เลือกไว้ใต้หัวข้อเสมอ
   $('ocrSub').textContent = segBtns.find(b => b.dataset.mode === mode).dataset.tip;
+  $('aiKeyRow').classList.toggle('show', mode === 'ai');
+}
+
+/* ---------- Gemini API key (เก็บใน localStorage ฝั่งผู้ใช้เท่านั้น) ---------- */
+const KEY_STORE = 'pdfmagic_gemini_key';
+function getAiKey() { return localStorage.getItem(KEY_STORE) || ''; }
+$('aiKeyInput').value = getAiKey();
+$('aiKeySave').addEventListener('click', () => {
+  localStorage.setItem(KEY_STORE, $('aiKeyInput').value.trim());
+  $('aiKeySave').textContent = '✅ บันทึกแล้ว';
+  setTimeout(() => { $('aiKeySave').textContent = '💾 บันทึก'; }, 1500);
+});
+
+/* ---------- AI OCR ผ่าน Google Gemini ----------
+   เรนเดอร์หน้าเป็น JPEG แล้วให้ Gemini ถอดความ + จัดโครงเอกสารเป็น JSON */
+async function renderPageForAi(page) {
+  const base = page.getViewport({ scale: 1 });
+  const scale = Math.min(2.5, 1700 / Math.max(base.width, base.height));
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport, intent: 'print' }).promise;
+  return canvas.toDataURL('image/jpeg', 0.85).split(',')[1]; // base64 ล้วน
+}
+
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+const AI_PROMPT = `Transcribe this scanned Thai document page accurately.
+Return ONLY JSON: {"blocks":[{"cols":["text"],"align":"left|center|right","indent":true|false}]}
+Rules:
+- Each block = one full paragraph or one table row, in reading order.
+- Merge wrapped lines of the same paragraph into a single block (do not split by visual line).
+- For tabular data, put each cell as a separate string in "cols"; for normal paragraphs use a single string.
+- "align" reflects the visual alignment on the page; "indent" true when the paragraph starts with a first-line indent.
+- IGNORE rubber stamps, handwritten signatures, logos, and watermark artifacts entirely.
+- Preserve Thai numerals (๐-๙) and original spelling exactly as printed. Do not translate.`;
+
+async function geminiRecognize(b64jpeg, apiKey) {
+  let lastErr = null;
+  for (const model of GEMINI_MODELS) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { inline_data: { mime_type: 'image/jpeg', data: b64jpeg } },
+            { text: AI_PROMPT },
+          ]}],
+          generationConfig: { response_mime_type: 'application/json', temperature: 0 },
+        }),
+      }
+    );
+    if (res.status === 404) { lastErr = new Error(`ไม่พบโมเดล ${model}`); continue; }
+    if (res.status === 400 || res.status === 403) {
+      throw new Error('Gemini API key ไม่ถูกต้องหรือหมดสิทธิ์ — ตรวจสอบ key ที่ aistudio.google.com/apikey');
+    }
+    if (res.status === 429) {
+      throw new Error('เรียก Gemini ถี่เกินโควตาฟรี — รอสักครู่แล้วลองใหม่ (free tier จำกัดจำนวนครั้งต่อนาที)');
+    }
+    if (!res.ok) { lastErr = new Error(`Gemini ตอบกลับผิดพลาด (HTTP ${res.status})`); continue; }
+    const data = await res.json();
+    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+    try {
+      return JSON.parse(text.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
+    } catch {
+      throw new Error('อ่านผลลัพธ์จาก Gemini ไม่ได้ — ลองอีกครั้ง');
+    }
+  }
+  throw lastErr || new Error('เรียก Gemini ไม่สำเร็จ');
+}
+
+async function extractPdfAi(file, onProgress) {
+  const apiKey = getAiKey();
+  if (!apiKey) {
+    throw new Error('โหมด AI OCR ต้องใส่ Gemini API key ก่อน — ขอฟรีได้ที่ aistudio.google.com/apikey แล้วกดบันทึก');
+  }
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pages = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    onProgress(0.05 + ((p - 1) / pdf.numPages) * 0.85,
+      `✨ AI OCR หน้า ${p} / ${pdf.numPages} — Gemini กำลังอ่าน…`);
+    const page = await pdf.getPage(p);
+    const b64 = await renderPageForAi(page);
+    const result = await geminiRecognize(b64, apiKey);
+    const rows = (result.blocks || []).map(b => {
+      const cols = (Array.isArray(b.cols) ? b.cols : [String(b.cols || '')])
+        .map(c => String(c).trim()).filter(Boolean);
+      if (!cols.length) return null;
+      cols.align = b.align === 'center' || b.align === 'right' ? b.align : 'left';
+      cols.indent = !!b.indent;
+      return cols;
+    }).filter(Boolean);
+    rows.aiLayout = true;
+    pages.push(rows);
+  }
+  return pages;
 }
 $('ocrSeg').addEventListener('click', (e) => {
   const b = e.target.closest('.seg-btn');
@@ -1009,6 +1149,13 @@ function baseName() {
    เพื่อให้ Word จัดคำใหม่ได้เหมือนเอกสารต้นฉบับ ไม่ใช่บรรทัดสั้น ๆ ต่อกัน */
 function buildParagraphModel(pages) {
   return pages.map(rows => {
+    // โหมด AI: Gemini จัดย่อหน้า/จัดวางมาให้แล้ว ใช้ตรง ๆ ไม่ต้องเดาจากพิกัด
+    if (rows.aiLayout) {
+      return rows.map(r => ({
+        text: r.join('\t'), cols: r.length,
+        align: r.align || 'left', indent: !!r.indent, flow: false,
+      }));
+    }
     const xs = rows.filter(r => r.x0 != null).map(r => r.x0);
     const minX = xs.length ? Math.min(...xs) : 0;
     const maxX1 = Math.max(...rows.map(r => r.x1 || 0), minX + 1);
@@ -1141,7 +1288,10 @@ $('convertBtn').addEventListener('click', async () => {
   try {
     let pages;
     lastUsedOcr = false;
-    if (ocrMode !== 'auto') {
+    if (ocrMode === 'ai') {
+      lastUsedOcr = 'ai';
+      pages = await extractPdfAi(currentFile, showProgress);
+    } else if (ocrMode !== 'auto') {
       lastUsedOcr = true;
       pages = await extractPdfOcr(currentFile, showProgress, ocrMode);
     } else {
@@ -1174,7 +1324,8 @@ $('convertBtn').addEventListener('click', async () => {
       $('progressWrap').classList.remove('show');
       $('resultMeta').textContent =
         `${outputName} • ${formatSize(outputBlob.size)} • ${pages.length} หน้า / ${totalRows} แถวข้อมูล` +
-        (lastUsedOcr ? ' • 🧠 อ่านด้วย Smart OCR' : '');
+        (lastUsedOcr === 'ai' ? ' • ✨ อ่านด้วย AI OCR (Gemini)'
+          : lastUsedOcr ? ' • 🧠 อ่านด้วย Smart OCR' : '');
       $('result').classList.add('show');
     }, 450);
   } catch (err) {
