@@ -622,7 +622,7 @@
       </div>
       <div class="ai-key-row" id="aiKeyRow">
         <input type="password" class="ai-key-input" id="aiKeyInput"
-          placeholder="วาง Gemini API key ที่นี่ (เก็บในเครื่องคุณเท่านั้น)" autocomplete="off">
+          placeholder="วาง Gemini API key (ใส่หลายตัวคั่นด้วยคอมมาเพื่อสลับอัตโนมัติ — เก็บในเครื่องคุณเท่านั้น)" autocomplete="off">
         <button type="button" class="ai-key-save" id="aiKeySave">💾 บันทึก</button>
         <a class="ai-key-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">
           🔑 ขอ key ฟรีที่ aistudio.google.com</a>
@@ -866,6 +866,8 @@ function setOcrMode(mode) {
 /* ---------- Gemini API key (เก็บใน localStorage ฝั่งผู้ใช้เท่านั้น) ---------- */
 const KEY_STORE = 'pdfmagic_gemini_key';
 function getAiKey() { return localStorage.getItem(KEY_STORE) || ''; }
+// รองรับหลาย key คั่นด้วยเว้นวรรค คอมมา หรือขึ้นบรรทัดใหม่ → Redundancy
+function getAiKeys() { return getAiKey().split(/[\s,]+/).map(k => k.trim()).filter(Boolean); }
 $('aiKeyInput').value = getAiKey();
 $('aiKeySave').addEventListener('click', () => {
   localStorage.setItem(KEY_STORE, $('aiKeyInput').value.trim());
@@ -889,7 +891,8 @@ async function renderPageForAi(page) {
   return canvas.toDataURL('image/jpeg', 0.85).split(',')[1]; // base64 ล้วน
 }
 
-const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+// gemini-flash-latest = alias ชี้รุ่นล่าสุดเสมอ (กันโมเดลเก่าถูกปลด) + สำรองอีก 2 รุ่น
+const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-2.5-flash'];
 const AI_PROMPT = `Transcribe this scanned Thai document page accurately.
 Return ONLY JSON: {"blocks":[{"cols":["text"],"align":"left|center|right","indent":true|false}]}
 Rules:
@@ -900,45 +903,57 @@ Rules:
 - IGNORE rubber stamps, handwritten signatures, logos, and watermark artifacts entirely.
 - Preserve Thai numerals (๐-๙) and original spelling exactly as printed. Do not translate.`;
 
-async function geminiRecognize(b64jpeg, apiKey) {
+/* Redundancy: ใส่ได้หลาย key — ตัวไหนเต็มโควตา/ใช้ไม่ได้ สลับตัวถัดไปอัตโนมัติ */
+async function geminiRecognize(b64jpeg, apiKeys) {
   let lastErr = null;
-  for (const model of GEMINI_MODELS) {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [
-            { inline_data: { mime_type: 'image/jpeg', data: b64jpeg } },
-            { text: AI_PROMPT },
-          ]}],
-          generationConfig: { response_mime_type: 'application/json', temperature: 0 },
-        }),
+  for (const apiKey of apiKeys) {
+    for (const model of GEMINI_MODELS) {
+      let res;
+      try {
+        res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [
+                { inline_data: { mime_type: 'image/jpeg', data: b64jpeg } },
+                { text: AI_PROMPT },
+              ]}],
+              generationConfig: { response_mime_type: 'application/json', temperature: 0 },
+            }),
+          }
+        );
+      } catch {
+        lastErr = new Error('เชื่อมต่อ Gemini ไม่ได้ — ตรวจสอบอินเทอร์เน็ต');
+        break; // ปัญหาเครือข่าย เปลี่ยน key ก็ไม่ช่วย แต่ลอง key ถัดไปเผื่อไว้
       }
-    );
-    if (res.status === 404) { lastErr = new Error(`ไม่พบโมเดล ${model}`); continue; }
-    if (res.status === 400 || res.status === 403) {
-      throw new Error('Gemini API key ไม่ถูกต้องหรือหมดสิทธิ์ — ตรวจสอบ key ที่ aistudio.google.com/apikey');
-    }
-    if (res.status === 429) {
-      throw new Error('เรียก Gemini ถี่เกินโควตาฟรี — รอสักครู่แล้วลองใหม่ (free tier จำกัดจำนวนครั้งต่อนาที)');
-    }
-    if (!res.ok) { lastErr = new Error(`Gemini ตอบกลับผิดพลาด (HTTP ${res.status})`); continue; }
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-    try {
-      return JSON.parse(text.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
-    } catch {
-      throw new Error('อ่านผลลัพธ์จาก Gemini ไม่ได้ — ลองอีกครั้ง');
+      if (res.status === 404) { lastErr = new Error(`ไม่พบโมเดล ${model}`); continue; }
+      if (res.status === 400 || res.status === 403) {
+        lastErr = new Error('Gemini API key ไม่ถูกต้องหรือหมดสิทธิ์ — ตรวจสอบ key ที่ aistudio.google.com/apikey');
+        break; // key นี้ใช้ไม่ได้ → สลับ key ถัดไป
+      }
+      if (res.status === 429) {
+        lastErr = new Error('key เต็มโควตาฟรีชั่วคราว — รอสักครู่แล้วลองใหม่');
+        break; // key นี้เต็มโควตา → สลับ key ถัดไป (redundancy)
+      }
+      if (!res.ok) { lastErr = new Error(`Gemini ตอบกลับผิดพลาด (HTTP ${res.status})`); continue; }
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+      try {
+        return JSON.parse(text.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
+      } catch {
+        lastErr = new Error('อ่านผลลัพธ์จาก Gemini ไม่ได้ — ลองอีกครั้ง');
+        continue;
+      }
     }
   }
   throw lastErr || new Error('เรียก Gemini ไม่สำเร็จ');
 }
 
 async function extractPdfAi(file, onProgress) {
-  const apiKey = getAiKey();
-  if (!apiKey) {
+  const apiKeys = getAiKeys();
+  if (!apiKeys.length) {
     throw new Error('โหมด AI OCR ต้องใส่ Gemini API key ก่อน — ขอฟรีได้ที่ aistudio.google.com/apikey แล้วกดบันทึก');
   }
   const buf = await file.arrayBuffer();
@@ -949,7 +964,7 @@ async function extractPdfAi(file, onProgress) {
       `✨ AI OCR หน้า ${p} / ${pdf.numPages} — Gemini กำลังอ่าน…`);
     const page = await pdf.getPage(p);
     const b64 = await renderPageForAi(page);
-    const result = await geminiRecognize(b64, apiKey);
+    const result = await geminiRecognize(b64, apiKeys);
     const rows = (result.blocks || []).map(b => {
       const cols = (Array.isArray(b.cols) ? b.cols : [String(b.cols || '')])
         .map(c => String(c).trim()).filter(Boolean);
