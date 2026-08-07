@@ -1,6 +1,6 @@
 /* Service Worker — PDF Magic Converter
    ให้เปิดใช้แบบออฟไลน์ได้หลังโหลดครั้งแรก (app shell + ไลบรารี CDN + โมเดล OCR) */
-const CACHE = 'pdf-magic-v1';
+const CACHE = 'pdf-magic-v2';
 const SHELL = [
   './',
   './index.html',

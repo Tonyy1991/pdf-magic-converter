@@ -761,8 +761,13 @@ async function extractPdf(file, onProgress) {
         }
         prevEnd = Math.max(prevEnd ?? -Infinity, it.x + it.w);
       }
-      return cols.map(c => c.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      const out = cols.map(c => c.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      // เก็บพิกัดไว้ใช้จัดหน้าเอกสาร Word (เยื้อง/กึ่งกลาง/รวมย่อหน้า)
+      out.x0 = r.items[0]?.x ?? 0;
+      out.x1 = prevEnd ?? 0;
+      return out;
     }).filter(r => r.length);
+    pageRows.pageW = page.getViewport({ scale: 1 }).width;
     pages.push(pageRows);
     onProgress((p / pdf.numPages) * 0.8, `กำลังอ่านหน้า ${p} / ${pdf.numPages}…`);
   }
@@ -791,8 +796,12 @@ let ocrWorkerPromise = null;
 function getOcrWorker(onStatus) {
   if (!ocrWorkerPromise) {
     ocrWorkerPromise = (async () => {
-      onStatus?.('กำลังโหลดโมเดล OCR ภาษาไทย (เฉพาะครั้งแรก อาจใช้เวลาสักครู่)…');
+      onStatus?.('กำลังโหลดโมเดล OCR ภาษาไทยความแม่นยำสูงสุด (เฉพาะครั้งแรก อาจใช้เวลาสักครู่)…');
+      // tessdata_best = โมเดล LSTM คุณภาพสูงสุดของ Tesseract (แม่นกว่ารุ่น fast มาก)
       const worker = await Tesseract.createWorker(['tha', 'eng'], 1, {
+        langPath: 'https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_best@4.1.0',
+        cachePath: 'tessdata-best-410',  // แยกแคชจากโมเดลรุ่นเก่า ไม่ให้หยิบผิดตัว
+        gzip: false,
         logger: (m) => {
           if (m.status === 'recognizing text' && typeof ocrPageProgress === 'function') {
             ocrPageProgress(m.progress);
@@ -810,8 +819,9 @@ function getOcrWorker(onStatus) {
 let ocrPageProgress = null;
 
 /* เรนเดอร์หน้า PDF เป็นภาพความละเอียดสูง แล้วปรับภาพให้ OCR อ่านง่ายขึ้น
-   (grayscale + Otsu binarization) */
-async function renderPageForOcr(page) {
+   mode 'gray'   = grayscale + contrast stretch (เหมาะกับโมเดล LSTM รุ่น best)
+   mode 'binary' = Otsu binarization (เผื่อภาพพื้นหลังสกปรก) */
+async function renderPageForOcr(page, mode = 'gray') {
   const base = page.getViewport({ scale: 1 });
   // เป้าหมาย ~2000px ด้านยาวสุด (≈240 DPI สำหรับ A4) — พอสำหรับ OCR ไทยและเร็ว
   // ไฟล์สแกนความละเอียดสูงจะถูก "ย่อ" ลงมา ไม่ใช่ขยายเพิ่มจนเป็นภาพยักษ์
@@ -837,23 +847,37 @@ async function renderPageForOcr(page) {
     gray[j] = g;
     hist[g]++;
   }
-  let sum = 0;
-  for (let t = 0; t < 256; t++) sum += t * hist[t];
-  let sumB = 0, wB = 0, maxVar = 0, threshold = 127;
-  for (let t = 0; t < 256; t++) {
-    wB += hist[t];
-    if (!wB) continue;
-    const wF = n - wB;
-    if (!wF) break;
-    sumB += t * hist[t];
-    const mB = sumB / wB, mF = (sum - sumB) / wF;
-    const between = wB * wF * (mB - mF) * (mB - mF);
-    if (between > maxVar) { maxVar = between; threshold = t; }
-  }
-  for (let i = 0, j = 0; i < d.length; i += 4, j++) {
-    const v = gray[j] > threshold ? 255 : 0;
-    d[i] = d[i + 1] = d[i + 2] = v;
-    d[i + 3] = 255;
+  if (mode === 'binary') {
+    let sum = 0;
+    for (let t = 0; t < 256; t++) sum += t * hist[t];
+    let sumB = 0, wB = 0, maxVar = 0, threshold = 127;
+    for (let t = 0; t < 256; t++) {
+      wB += hist[t];
+      if (!wB) continue;
+      const wF = n - wB;
+      if (!wF) break;
+      sumB += t * hist[t];
+      const mB = sumB / wB, mF = (sum - sumB) / wF;
+      const between = wB * wF * (mB - mF) * (mB - mF);
+      if (between > maxVar) { maxVar = between; threshold = t; }
+    }
+    for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+      const v = gray[j] > threshold ? 255 : 0;
+      d[i] = d[i + 1] = d[i + 2] = v;
+      d[i + 3] = 255;
+    }
+  } else {
+    // contrast stretch: percentile 2–98 → เต็มช่วง 0–255 (คงรายละเอียดเส้นอักษรไว้ให้ LSTM)
+    let lo = 0, hi = 255, acc = 0;
+    for (let t = 0; t < 256; t++) { acc += hist[t]; if (acc >= n * 0.02) { lo = t; break; } }
+    acc = 0;
+    for (let t = 0; t < 256; t++) { acc += hist[t]; if (acc >= n * 0.98) { hi = t; break; } }
+    const range = Math.max(1, hi - lo);
+    for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+      const v = Math.max(0, Math.min(255, ((gray[j] - lo) * 255 / range) | 0));
+      d[i] = d[i + 1] = d[i + 2] = v;
+      d[i + 3] = 255;
+    }
   }
   ctx.putImageData(img, 0, 0);
   return canvas;
@@ -899,7 +923,10 @@ function ocrWordsToRows(words) {
       }
       prevEnd = w.bbox.x1;
     }
-    return cols.map(c => c.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const out = cols.map(c => c.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    out.x0 = l.words[0]?.bbox.x0 ?? 0;
+    out.x1 = prevEnd ?? 0;
+    return out;
   }).filter(r => r.length);
 }
 
@@ -917,8 +944,9 @@ async function extractPdfOcr(file, onProgress) {
       onProgress(frac(pr), `🧠 OCR หน้า ${p} / ${pdf.numPages} — อ่านตัวอักษร ${Math.round(pr * 100)}%`);
     const { data } = await worker.recognize(canvas);
     ocrPageProgress = null;
-    const words = data.words || [];
-    pages.push(ocrWordsToRows(words));
+    const pageRows = ocrWordsToRows(data.words || []);
+    pageRows.pageW = canvas.width;
+    pages.push(pageRows);
     canvas.width = canvas.height = 0;
   }
   return pages;
@@ -929,37 +957,91 @@ function baseName() {
   return currentFile.name.replace(/\.pdf$/i, '');
 }
 
-async function toDocx(pages) {
-  const { Document, Packer, Paragraph, TextRun, PageBreak } = window.docx;
-  const children = [];
-  pages.forEach((rows, pi) => {
-    if (pi > 0) children.push(new Paragraph({ children: [new PageBreak()] }));
-    rows.forEach(cols => {
-      children.push(new Paragraph({
-        children: [new TextRun({ text: cols.join('\t'), font: 'TH Sarabun New', size: 28 })],
-      }));
-    });
-    if (!rows.length) children.push(new Paragraph({ text: '' }));
+/* ---------- วิเคราะห์โครงหน้าเอกสาร: ย่อหน้า / กึ่งกลาง / เยื้อง ----------
+   ใช้พิกัดจริงของแต่ละแถวตัดสินใจ แล้วรวมบรรทัดที่ "ไหลต่อกัน" เป็นย่อหน้าเดียว
+   เพื่อให้ Word จัดคำใหม่ได้เหมือนเอกสารต้นฉบับ ไม่ใช่บรรทัดสั้น ๆ ต่อกัน */
+function buildParagraphModel(pages) {
+  return pages.map(rows => {
+    const xs = rows.filter(r => r.x0 != null).map(r => r.x0);
+    const minX = xs.length ? Math.min(...xs) : 0;
+    const maxX1 = Math.max(...rows.map(r => r.x1 || 0), minX + 1);
+    const span = maxX1 - minX;
+    const paras = [];
+    let prev = null;
+    for (const r of rows) {
+      const single = r.length === 1;
+      const text = r.join('\t');
+      const width = Math.max(0, (r.x1 || 0) - (r.x0 || 0));
+      const centerOff = Math.abs((r.x0 + r.x1) / 2 - (minX + maxX1) / 2);
+      const isCentered = single && width < span * 0.72 && centerOff < span * 0.07;
+      const indented = !isCentered && r.x0 > minX + span * 0.045;
+      const fullWidth = (r.x1 || 0) > maxX1 - span * 0.10;
+      // บรรทัดก่อนหน้ายาวจนสุดขอบ + บรรทัดนี้ชิดซ้ายปกติ → เนื้อความไหลต่อกัน
+      if (prev && prev.flow && single && !isCentered && !indented) {
+        const joinThai = /[฀-๿]/.test(prev.text.slice(-1)) && /[฀-๿]/.test(text.charAt(0));
+        prev.text += (joinThai ? '' : ' ') + text;
+        prev.flow = fullWidth;
+        continue;
+      }
+      prev = { text, cols: r.length, align: isCentered ? 'center' : 'left',
+               indent: indented, flow: fullWidth && single && !isCentered };
+      paras.push(prev);
+    }
+    return paras;
   });
-  const doc = new Document({ sections: [{ children }] });
+}
+
+async function toDocx(pages) {
+  const { Document, Packer, Paragraph, TextRun, PageBreak, AlignmentType } = window.docx;
+  const FONT = { ascii: 'TH Sarabun PSK', hAnsi: 'TH Sarabun PSK', cs: 'TH Sarabun PSK', eastAsia: 'TH Sarabun PSK' };
+  const model = buildParagraphModel(pages);
+  const children = [];
+  model.forEach((paras, pi) => {
+    if (pi > 0) children.push(new Paragraph({ children: [new PageBreak()] }));
+    for (const p of paras) {
+      children.push(new Paragraph({
+        alignment: p.align === 'center' ? AlignmentType.CENTER : AlignmentType.LEFT,
+        indent: p.indent ? { firstLine: 720 } : undefined,
+        spacing: { after: 40, line: 240 },
+        children: [new TextRun({ text: p.text, font: FONT, size: 32, sizeComplexScript: 32 })],
+      }));
+    }
+    if (!paras.length) children.push(new Paragraph({ text: '' }));
+  });
+  const doc = new Document({
+    styles: { default: { document: { run: { font: FONT, size: 32, sizeComplexScript: 32 } } } },
+    sections: [{
+      properties: {
+        page: {
+          size: { width: 11906, height: 16838 },            // A4
+          margin: { top: 1440, bottom: 1440, left: 1701, right: 1440 }, // ซ้าย 3 ซม. ตามเอกสารราชการ
+        },
+      },
+      children,
+    }],
+  });
   return await Packer.toBlob(doc);
 }
 
 function toDocHtml(pages) {
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const model = buildParagraphModel(pages);
   let body = '';
-  pages.forEach((rows, pi) => {
+  model.forEach((paras, pi) => {
     if (pi > 0) body += '<br clear="all" style="page-break-before:always">';
-    rows.forEach(cols => {
-      body += `<p style="margin:0 0 4pt 0">${cols.map(esc).join('&nbsp;&nbsp;&nbsp;&nbsp;')}</p>`;
-    });
+    for (const p of paras) {
+      const style = ['margin:0 0 3pt 0'];
+      if (p.align === 'center') style.push('text-align:center');
+      if (p.indent) style.push('text-indent:0.5in');
+      body += `<p style="${style.join(';')}">${esc(p.text).replace(/\t/g, '&nbsp;&nbsp;&nbsp;&nbsp;')}</p>`;
+    }
   });
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
 xmlns:w="urn:schemas-microsoft-com:office:word"
 xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"><title>${esc(baseName())}</title>
 <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
-<style>body{font-family:'TH Sarabun New','Angsana New',sans-serif;font-size:14pt}</style>
+<style>body{font-family:'TH Sarabun PSK','TH SarabunPSK','TH Sarabun New','Angsana New',sans-serif;font-size:16pt}</style>
 </head><body>${body}</body></html>`;
   return new Blob(['﻿', html], { type: 'application/msword' });
 }
