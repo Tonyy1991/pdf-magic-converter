@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#120408" id="metaTheme">
+<meta name="theme-color" content="#050b18" id="metaTheme">
 <meta name="description" content="แปลงไฟล์ PDF เป็น DOCX, DOC, XLSX, XLS, CSV พร้อม Smart OCR ภาษาไทย — ทำงานในเครื่องคุณ 100%">
 <title>PDF Magic Converter — แปลง PDF เป็น DOCX / DOC / XLSX / CSV / XLS</title>
 <link rel="manifest" href="manifest.json">
@@ -20,21 +20,21 @@
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <style>
   /* ========== CSS Variables & Themes ========== */
-  /* ธีมกลางคืน: Blood Diamond — ทับทิมแดงเข้มบนพื้นดำ หรูดุดัน 🔻💎 */
+  /* ธีมกลางคืน: Blue Diamond — แซฟไฟร์น้ำเงินเข้มประกายน้ำแข็งบนพื้นดำ 🔷💎 */
   :root[data-theme="dark"] {
-    --bg: #120408;
-    --bg2: #1e0710;
-    --text: #ffedf0;
-    --text-dim: #c08e9a;
-    --glass: rgba(255, 80, 110, 0.07);
-    --glass-border: rgba(255, 120, 145, 0.16);
-    --glass-hover: rgba(255, 90, 120, 0.12);
-    --accent1: #b3122f;   /* เลือดหมูเข้ม */
-    --accent2: #e0115f;   /* Ruby แท้ */
-    --accent3: #ff4d6d;   /* ประกายเพชรแดง */
+    --bg: #050b18;
+    --bg2: #0a1428;
+    --text: #eaf3ff;
+    --text-dim: #8fa8c9;
+    --glass: rgba(90, 160, 255, 0.07);
+    --glass-border: rgba(120, 180, 255, 0.16);
+    --glass-hover: rgba(100, 170, 255, 0.12);
+    --accent1: #0f52ba;   /* Sapphire แท้ */
+    --accent2: #2e86ff;   /* น้ำเงินเจียระไน */
+    --accent3: #7fd0ff;   /* ประกายน้ำแข็ง */
     --success: #10b981;
-    --shadow: rgba(90, 0, 22, 0.6);
-    --particle: rgba(255, 105, 125, 0.55);
+    --shadow: rgba(0, 30, 90, 0.6);
+    --particle: rgba(150, 205, 255, 0.55);
   }
   /* ธีมกลางวัน: Tiffany Blue — สวยใส วิ้ง ๆ มีระดับ 💎 */
   :root[data-theme="light"] {
@@ -638,7 +638,7 @@ $('themeToggle').addEventListener('click', () => {
   root.dataset.theme = next;
   $('toggleKnob').textContent = next === 'dark' ? '🌙' : '☀️';
   // แถบ URL บนมือถือเปลี่ยนสีตามธีม
-  $('metaTheme').content = next === 'dark' ? '#120408' : '#e9f9f8';
+  $('metaTheme').content = next === 'dark' ? '#050b18' : '#e9f9f8';
 });
 
 /* ---------- เทคนิค 3: Particles ---------- */
