@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="th" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a1a" id="metaTheme">
+<meta name="description" content="แปลงไฟล์ PDF เป็น DOCX, DOC, XLSX, XLS, CSV พร้อม Smart OCR ภาษาไทย — ทำงานในเครื่องคุณ 100%">
+<title>PDF Magic Converter — แปลง PDF เป็น DOCX / DOC / XLSX / CSV / XLS</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PDF Magic">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=Sarabun:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<style>
+  /* ========== CSS Variables & Themes ========== */
+  :root[data-theme="dark"] {
+    --bg: #0a0a1a;
+    --bg2: #12122b;
+    --text: #f0f2ff;
+    --text-dim: #9aa0c3;
+    --glass: rgba(255, 255, 255, 0.06);
+    --glass-border: rgba(255, 255, 255, 0.12);
+    --glass-hover: rgba(255, 255, 255, 0.10);
+    --accent1: #7c3aed;
+    --accent2: #06b6d4;
+    --accent3: #ec4899;
+    --success: #10b981;
+    --shadow: rgba(0, 0, 0, 0.5);
+    --particle: rgba(255, 255, 255, 0.5);
+  }
+  :root[data-theme="light"] {
+    --bg: #eef1fb;
+    --bg2: #e2e8f7;
+    --text: #1a1d3a;
+    --text-dim: #5a6084;
+    --glass: rgba(255, 255, 255, 0.55);
+    --glass-border: rgba(255, 255, 255, 0.8);
+    --glass-hover: rgba(255, 255, 255, 0.75);
+    --accent1: #7c3aed;
+    --accent2: #0891b2;
+    --accent3: #db2777;
+    --success: #059669;
+    --shadow: rgba(100, 110, 180, 0.25);
+    --particle: rgba(124, 58, 237, 0.35);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  /* มือถือ: ตัดไฮไลต์สีเทาตอนแตะ + ไม่ต้องรอเช็ค double-tap zoom */
+  button, .fmt, .dropzone, .theme-toggle, .ocr-switch, .badge {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'Kanit', 'Sarabun', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+    transition: background 0.6s ease, color 0.6s ease;
+  }
+
+  /* ========== เทคนิค 2: Animated Gradient Background ========== */
+  .bg-orbs {
+    position: fixed; inset: 0; z-index: 0; overflow: hidden;
+    pointer-events: none;
+  }
+  .orb {
+    position: absolute; border-radius: 50%;
+    filter: blur(90px); opacity: 0.5;
+    animation: float-orb 18s ease-in-out infinite alternate;
+  }
+  .orb1 { width: 45vw; height: 45vw; background: var(--accent1); top: -15%; left: -10%; }
+  .orb2 { width: 40vw; height: 40vw; background: var(--accent2); bottom: -15%; right: -10%; animation-delay: -6s; animation-duration: 22s; }
+  .orb3 { width: 30vw; height: 30vw; background: var(--accent3); top: 40%; left: 55%; animation-delay: -12s; animation-duration: 26s; }
+  @keyframes float-orb {
+    0%   { transform: translate(0, 0) scale(1); }
+    50%  { transform: translate(8vw, -6vh) scale(1.15); }
+    100% { transform: translate(-6vw, 8vh) scale(0.9); }
+  }
+
+  /* ========== เทคนิค 3: Particles ========== */
+  #particles { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+
+  .container {
+    position: relative; z-index: 2;
+    max-width: 880px; margin: 0 auto;
+    padding: 24px 20px 60px;
+  }
+
+  /* ========== Header ========== */
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0 32px;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 12px;
+    font-weight: 600; font-size: 1.15rem;
+  }
+  .logo-icon {
+    width: 44px; height: 44px; border-radius: 14px;
+    background: linear-gradient(135deg, var(--accent1), var(--accent2));
+    display: grid; place-items: center; font-size: 1.3rem;
+    box-shadow: 0 8px 24px -6px var(--accent1);
+    animation: pulse-glow 3s ease-in-out infinite;
+  }
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 8px 24px -6px var(--accent1); }
+    50% { box-shadow: 0 8px 32px -2px var(--accent2); }
+  }
+
+  /* ========== เทคนิค 6: Dark/Light Toggle ========== */
+  .theme-toggle {
+    width: 64px; height: 34px; border-radius: 20px;
+    background: var(--glass); border: 1px solid var(--glass-border);
+    backdrop-filter: blur(12px); cursor: pointer; position: relative;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .theme-toggle:hover { transform: scale(1.06); }
+  .toggle-knob {
+    position: absolute; top: 3px; left: 4px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent1), var(--accent3));
+    display: grid; place-items: center; font-size: 0.85rem;
+    transition: transform 0.45s cubic-bezier(0.68, -0.4, 0.27, 1.4);
+  }
+  :root[data-theme="light"] .toggle-knob { transform: translateX(29px); }
+
+  /* ========== Hero ========== */
+  .hero { text-align: center; margin-bottom: 40px; animation: fade-up 0.8s ease both; }
+  .hero h1 {
+    font-size: clamp(1.8rem, 5vw, 2.9rem); font-weight: 700; line-height: 1.25;
+    background: linear-gradient(120deg, var(--accent2), var(--accent1), var(--accent3), var(--accent2));
+    background-size: 300% auto;
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: gradient-slide 6s linear infinite;
+  }
+  @keyframes gradient-slide { to { background-position: 300% center; } }
+  .hero p { color: var(--text-dim); margin-top: 10px; font-weight: 300; font-size: 1.05rem; }
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ========== เทคนิค 1: Glassmorphism Cards ========== */
+  .glass-card {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 24px;
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    box-shadow: 0 20px 50px -20px var(--shadow);
+    padding: 28px;
+    margin-bottom: 24px;
+    animation: fade-up 0.8s ease both;
+    transition: background 0.4s ease, border-color 0.4s ease;
+  }
+  .glass-card:nth-of-type(2) { animation-delay: 0.1s; }
+  .glass-card:nth-of-type(3) { animation-delay: 0.2s; }
+
+  .step-label {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 600; margin-bottom: 18px; font-size: 1.05rem;
+  }
+  .step-num {
+    width: 30px; height: 30px; border-radius: 10px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent1), var(--accent2));
+    display: grid; place-items: center; color: white; font-size: 0.9rem;
+  }
+
+  /* ========== เทคนิค 5: 3D Tilt Dropzone ========== */
+  .dropzone-wrap { perspective: 900px; }
+  .dropzone {
+    border: 2px dashed var(--glass-border);
+    border-radius: 20px;
+    padding: 48px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: transform 0.15s ease-out, border-color 0.3s, background 0.3s;
+    transform-style: preserve-3d;
+    will-change: transform;
+  }
+  .dropzone:hover { border-color: var(--accent2); background: var(--glass-hover); }
+  .dropzone.dragover {
+    border-color: var(--accent3);
+    background: var(--glass-hover);
+    transform: scale(1.02);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent3) 30%, transparent), 0 20px 60px -20px var(--accent3);
+  }
+  .dz-icon {
+    font-size: 3.2rem; margin-bottom: 12px; display: inline-block;
+    animation: bob 2.6s ease-in-out infinite;
+  }
+  @keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  .dropzone.dragover .dz-icon { animation: bob 0.6s ease-in-out infinite; }
+  .dz-title { font-weight: 500; font-size: 1.15rem; }
+  .dz-sub { color: var(--text-dim); font-size: 0.9rem; margin-top: 6px; font-weight: 300; }
+  #fileInput { display: none; }
+
+  .file-chip {
+    display: none;
+    margin-top: 18px; padding: 14px 18px;
+    background: var(--glass-hover); border: 1px solid var(--glass-border);
+    border-radius: 14px;
+    align-items: center; gap: 12px;
+    animation: fade-up 0.4s ease both;
+  }
+  .file-chip.show { display: flex; }
+  .file-chip .fc-icon { font-size: 1.6rem; }
+  .file-chip .fc-name { font-weight: 500; word-break: break-all; flex: 1; text-align: left; }
+  .file-chip .fc-meta { color: var(--text-dim); font-size: 0.82rem; font-weight: 300; }
+  .fc-remove {
+    background: none; border: none; color: var(--text-dim); cursor: pointer;
+    font-size: 1.1rem; padding: 6px; border-radius: 8px; transition: all 0.25s;
+  }
+  .fc-remove:hover { color: var(--accent3); background: var(--glass); transform: rotate(90deg); }
+
+  /* ========== เทคนิค 4: Micro-interactions (format cards) ========== */
+  .formats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 14px;
+  }
+  .fmt {
+    position: relative;
+    background: var(--glass); border: 2px solid var(--glass-border);
+    border-radius: 18px; padding: 20px 12px; text-align: center;
+    cursor: pointer; overflow: hidden;
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.3s, background 0.3s, box-shadow 0.3s;
+  }
+  .fmt:hover { transform: translateY(-6px) scale(1.03); background: var(--glass-hover); }
+  .fmt:active { transform: translateY(-2px) scale(0.98); }
+  .fmt .fmt-icon {
+    font-size: 2rem; display: block; margin-bottom: 8px;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .fmt:hover .fmt-icon { transform: scale(1.25) rotate(-6deg); }
+  .fmt .fmt-ext { font-weight: 600; font-size: 1.05rem; letter-spacing: 0.5px; }
+  .fmt .fmt-desc { color: var(--text-dim); font-size: 0.75rem; font-weight: 300; margin-top: 4px; }
+  .fmt.selected {
+    border-color: var(--accent2);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent2) 25%, transparent), 0 12px 30px -12px var(--accent2);
+    background: var(--glass-hover);
+  }
+  .fmt.selected::after {
+    content: '✓';
+    position: absolute; top: 8px; right: 10px;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent2), var(--accent1));
+    color: white; font-size: 0.75rem;
+    display: grid; place-items: center;
+    animation: pop-in 0.35s cubic-bezier(0.34, 1.8, 0.64, 1) both;
+  }
+  @keyframes pop-in {
+    from { transform: scale(0); }
+    to { transform: scale(1); }
+  }
+
+  /* ========== Convert Button ========== */
+  .convert-btn {
+    width: 100%; padding: 18px; border: none; border-radius: 18px;
+    font-family: inherit; font-size: 1.2rem; font-weight: 600; color: white;
+    background: linear-gradient(120deg, var(--accent1), var(--accent2), var(--accent3), var(--accent1));
+    background-size: 300% auto;
+    cursor: pointer; position: relative; overflow: hidden;
+    transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: gradient-slide 5s linear infinite;
+    box-shadow: 0 14px 40px -12px var(--accent1);
+  }
+  .convert-btn:hover:not(:disabled) { transform: translateY(-3px); box-shadow: 0 20px 50px -12px var(--accent2); }
+  .convert-btn:active:not(:disabled) { transform: translateY(0) scale(0.985); }
+  .convert-btn:disabled { opacity: 0.4; cursor: not-allowed; filter: saturate(0.4); animation: none; }
+  .convert-btn .shine {
+    position: absolute; top: 0; left: -80%;
+    width: 60%; height: 100%;
+    background: linear-gradient(100deg, transparent, rgba(255,255,255,0.35), transparent);
+    transform: skewX(-20deg);
+    animation: shine-sweep 3.5s ease-in-out infinite;
+  }
+  @keyframes shine-sweep {
+    0%, 55% { left: -80%; }
+    85%, 100% { left: 130%; }
+  }
+
+  /* ========== Progress ========== */
+  .progress-wrap { display: none; margin-top: 20px; }
+  .progress-wrap.show { display: block; animation: fade-up 0.4s ease both; }
+  .progress-track {
+    height: 12px; border-radius: 10px; overflow: hidden;
+    background: var(--glass); border: 1px solid var(--glass-border);
+  }
+  .progress-fill {
+    height: 100%; width: 0%; border-radius: 10px;
+    background: linear-gradient(90deg, var(--accent2), var(--accent1), var(--accent3));
+    background-size: 200% auto;
+    animation: gradient-slide 2s linear infinite;
+    transition: width 0.35s ease;
+  }
+  .progress-text { text-align: center; margin-top: 10px; color: var(--text-dim); font-size: 0.9rem; font-weight: 300; }
+
+  /* ========== Result ========== */
+  .result {
+    display: none; text-align: center; padding: 10px 0;
+  }
+  .result.show { display: block; animation: fade-up 0.5s ease both; }
+  .result-icon {
+    font-size: 3rem; display: inline-block;
+    animation: pop-in 0.5s cubic-bezier(0.34, 1.8, 0.64, 1) both;
+  }
+  .result h3 { margin: 10px 0 4px; }
+  .result p { color: var(--text-dim); font-weight: 300; font-size: 0.9rem; margin-bottom: 18px; }
+  .download-btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 14px 34px; border: none; border-radius: 16px;
+    font-family: inherit; font-size: 1.05rem; font-weight: 600; color: white;
+    background: linear-gradient(135deg, var(--success), var(--accent2));
+    cursor: pointer;
+    box-shadow: 0 12px 32px -10px var(--success);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .download-btn:hover { transform: translateY(-3px) scale(1.03); box-shadow: 0 18px 40px -10px var(--success); }
+  .download-btn:active { transform: scale(0.97); }
+  .again-btn {
+    display: block; margin: 14px auto 0; background: none; border: none;
+    color: var(--text-dim); font-family: inherit; cursor: pointer;
+    font-size: 0.9rem; text-decoration: underline; text-underline-offset: 3px;
+    transition: color 0.3s;
+  }
+  .again-btn:hover { color: var(--accent2); }
+
+  /* ========== Smart OCR toggle ========== */
+  .ocr-row {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 18px; padding: 14px 16px;
+    background: var(--glass); border: 1px solid var(--glass-border);
+    border-radius: 14px;
+  }
+  .ocr-brain {
+    font-size: 1.5rem;
+    animation: pulse-glow 3s ease-in-out infinite;
+    border-radius: 50%;
+  }
+  .ocr-info { flex: 1; min-width: 180px; }
+  .ocr-title { font-weight: 500; font-size: 0.95rem; }
+  .ocr-sub { color: var(--text-dim); font-size: 0.78rem; font-weight: 300; }
+  .ocr-switch {
+    position: relative; width: 52px; height: 28px; border-radius: 20px;
+    background: var(--glass); border: 1px solid var(--glass-border);
+    cursor: pointer; transition: all 0.35s ease; flex-shrink: 0;
+  }
+  .ocr-switch::after {
+    content: ''; position: absolute; top: 3px; left: 4px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--text-dim);
+    transition: all 0.35s cubic-bezier(0.68, -0.4, 0.27, 1.4);
+  }
+  .ocr-switch.on {
+    background: linear-gradient(135deg, var(--accent1), var(--accent2));
+    border-color: transparent;
+  }
+  .ocr-switch.on::after { transform: translateX(23px); background: white; }
+  .ocr-mode-label { font-size: 0.8rem; color: var(--text-dim); flex-shrink: 0; }
+  .ocr-badge {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.72rem; color: white;
+    background: linear-gradient(135deg, var(--accent1), var(--accent3));
+    margin-left: 6px; vertical-align: middle;
+  }
+
+  .error-box {
+    display: none; margin-top: 16px; padding: 14px 18px;
+    border-radius: 14px; border: 1px solid color-mix(in srgb, var(--accent3) 50%, transparent);
+    background: color-mix(in srgb, var(--accent3) 12%, transparent);
+    color: var(--text); font-size: 0.92rem;
+  }
+  .error-box.show { display: block; animation: shake 0.45s ease; }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-8px); }
+    75% { transform: translateX(8px); }
+  }
+
+  /* ========== Footer: 7 techniques badges ========== */
+  .tech-badges {
+    display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+    margin-top: 8px;
+  }
+  .badge {
+    padding: 7px 14px; border-radius: 999px; font-size: 0.78rem; font-weight: 400;
+    background: var(--glass); border: 1px solid var(--glass-border);
+    backdrop-filter: blur(10px); color: var(--text-dim);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    cursor: default;
+  }
+  .badge:hover {
+    transform: translateY(-4px) rotate(-2deg);
+    color: var(--text); border-color: var(--accent2);
+    box-shadow: 0 10px 24px -10px var(--accent2);
+  }
+  footer { text-align: center; margin-top: 36px; animation: fade-up 0.8s 0.3s ease both; }
+  footer .foot-title { color: var(--text-dim); font-size: 0.85rem; font-weight: 300; margin-bottom: 12px; }
+
+  /* ========== เทคนิค 7: Responsive (มือถือสวยเท่าเดสก์ท็อป) ========== */
+  @media (max-width: 560px) {
+    /* รองรับจอมีรอยบาก (iPhone/Android รุ่นใหม่) */
+    .container {
+      padding: 14px max(14px, env(safe-area-inset-left))
+               calc(36px + env(safe-area-inset-bottom))
+               max(14px, env(safe-area-inset-right));
+    }
+    header { padding-bottom: 22px; }
+    .logo { font-size: 1.02rem; gap: 10px; }
+    .logo-icon { width: 40px; height: 40px; border-radius: 12px; }
+
+    .glass-card {
+      padding: 20px 16px; border-radius: 20px; margin-bottom: 18px;
+      /* ลดภาระ GPU มือถือ: เบลอเบาลงแต่ยังได้ฟีลกระจก */
+      backdrop-filter: blur(14px) saturate(1.3);
+      -webkit-backdrop-filter: blur(14px) saturate(1.3);
+    }
+    .orb { filter: blur(60px); opacity: 0.45; }
+
+    .hero { margin-bottom: 28px; }
+    .hero p { font-size: 0.92rem; padding: 0 4px; }
+
+    .dropzone { padding: 34px 14px; border-radius: 16px; }
+    .dz-icon { font-size: 2.7rem; }
+    .dz-title { font-size: 1.05rem; }
+
+    /* การ์ดนามสกุล: 2 คอลัมน์ และใบสุดท้าย (CSV) เต็มแถวให้สมมาตร */
+    .formats { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .fmt { padding: 16px 10px; }
+    .fmt:last-child { grid-column: 1 / -1; }
+    .fmt .fmt-icon { font-size: 1.8rem; margin-bottom: 6px; }
+
+    /* Touch targets ≥ 44px ตามมาตรฐาน */
+    .theme-toggle { width: 74px; height: 44px; border-radius: 26px; }
+    .toggle-knob { width: 36px; height: 36px; top: 3px; left: 4px; font-size: 1.05rem; }
+    :root[data-theme="light"] .toggle-knob { transform: translateX(30px); }
+    .ocr-switch { width: 62px; height: 38px; }
+    .ocr-switch::after { width: 30px; height: 30px; top: 3px; }
+    .ocr-switch.on::after { transform: translateX(24px); }
+
+    .ocr-row { padding: 12px 14px; gap: 10px; }
+    .ocr-info { min-width: 100%; order: 3; }
+    .ocr-brain { order: 1; }
+    .ocr-mode-label { order: 2; margin-left: auto; }
+    .ocr-switch { order: 2; }
+
+    .convert-btn { padding: 16px; font-size: 1.1rem; border-radius: 16px; }
+    .download-btn { padding: 14px 28px; width: 100%; justify-content: center; }
+
+    .file-chip { padding: 12px 14px; }
+    .badge { padding: 6px 12px; font-size: 0.72rem; }
+    footer { margin-top: 26px; }
+  }
+
+  /* จอเล็กมาก (iPhone SE แนวตั้ง) */
+  @media (max-width: 360px) {
+    .formats { gap: 8px; }
+    .fmt .fmt-desc { display: none; }
+    .hero h1 { font-size: 1.6rem; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- เทคนิค 2: Animated gradient orbs -->
+<div class="bg-orbs">
+  <div class="orb orb1"></div>
+  <div class="orb orb2"></div>
+  <div class="orb orb3"></div>
+</div>
+
+<!-- เทคนิค 3: Particles -->
+<canvas id="particles"></canvas>
+
+<div class="container">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">📄</div>
+      <span>PDF Magic Converter</span>
+    </div>
+    <!-- เทคนิค 6: Theme toggle -->
+    <button class="theme-toggle" id="themeToggle" title="สลับธีม" aria-label="สลับธีมสว่าง/มืด">
+      <div class="toggle-knob" id="toggleKnob">🌙</div>
+    </button>
+  </header>
+
+  <div class="hero">
+    <h1>แปลงไฟล์ PDF ได้ดั่งใจ</h1>
+    <p>ลากไฟล์มาวาง เลือกนามสกุลที่ต้องการ แล้วดาวน์โหลดได้ทันที — รองรับ PDF สแกนด้วย 🧠 Smart OCR ภาษาไทย ทำงานในเครื่องคุณ 100% ไฟล์ไม่ถูกอัปโหลดไปไหน</p>
+  </div>
+
+  <!-- STEP 1: Dropzone -->
+  <div class="glass-card">
+    <div class="step-label"><div class="step-num">1</div> วางไฟล์ PDF ของคุณ</div>
+    <div class="dropzone-wrap">
+      <div class="dropzone" id="dropzone">
+        <span class="dz-icon">📥</span>
+        <div class="dz-title">ลากไฟล์ PDF มาวางที่นี่</div>
+        <div class="dz-sub">หรือคลิกเพื่อเลือกไฟล์จากเครื่อง</div>
+      </div>
+    </div>
+    <input type="file" id="fileInput" accept=".pdf,application/pdf">
+    <div class="file-chip" id="fileChip">
+      <span class="fc-icon">📕</span>
+      <div style="flex:1">
+        <div class="fc-name" id="fcName"></div>
+        <div class="fc-meta" id="fcMeta"></div>
+      </div>
+      <button class="fc-remove" id="fcRemove" title="ลบไฟล์">✕</button>
+    </div>
+  </div>
+
+  <!-- STEP 2: Format selection -->
+  <div class="glass-card">
+    <div class="step-label"><div class="step-num">2</div> เลือกนามสกุลไฟล์ปลายทาง</div>
+    <div class="formats" id="formats">
+      <div class="fmt" data-fmt="docx"><span class="fmt-icon">📝</span><div class="fmt-ext">.DOCX</div><div class="fmt-desc">Word สมัยใหม่</div></div>
+      <div class="fmt" data-fmt="doc"><span class="fmt-icon">📃</span><div class="fmt-ext">.DOC</div><div class="fmt-desc">Word รุ่นเก่า</div></div>
+      <div class="fmt" data-fmt="xlsx"><span class="fmt-icon">📊</span><div class="fmt-ext">.XLSX</div><div class="fmt-desc">Excel สมัยใหม่</div></div>
+      <div class="fmt" data-fmt="xls"><span class="fmt-icon">📈</span><div class="fmt-ext">.XLS</div><div class="fmt-desc">Excel รุ่นเก่า</div></div>
+      <div class="fmt" data-fmt="csv"><span class="fmt-icon">🗒️</span><div class="fmt-ext">.CSV</div><div class="fmt-desc">ตารางข้อความ</div></div>
+    </div>
+  </div>
+
+  <!-- STEP 3: Convert -->
+  <div class="glass-card">
+    <div class="step-label"><div class="step-num">3</div> แปลงไฟล์</div>
+    <div class="ocr-row">
+      <span class="ocr-brain">🧠</span>
+      <div class="ocr-info">
+        <div class="ocr-title">Smart OCR ภาษาไทย <span class="ocr-badge">AI</span></div>
+        <div class="ocr-sub" id="ocrSub">โหมดอัตโนมัติ: ถ้าเป็น PDF สแกน/ภาพถ่าย ระบบจะอ่านตัวอักษรไทย-อังกฤษด้วย OCR ให้เอง</div>
+      </div>
+      <span class="ocr-mode-label" id="ocrModeLabel">อัตโนมัติ</span>
+      <div class="ocr-switch" id="ocrSwitch" title="เปิด = บังคับใช้ OCR ทุกไฟล์" role="switch" aria-checked="false" tabindex="0"></div>
+    </div>
+    <button class="convert-btn" id="convertBtn" disabled>
+      <span class="shine"></span>
+      <span id="convertLabel">🚀 เริ่มแปลงไฟล์</span>
+    </button>
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-text" id="progressText">กำลังอ่านไฟล์…</div>
+    </div>
+    <div class="result" id="result">
+      <span class="result-icon">🎉</span>
+      <h3>แปลงไฟล์สำเร็จ!</h3>
+      <p id="resultMeta"></p>
+      <button class="download-btn" id="downloadBtn">⬇️ ดาวน์โหลดไฟล์</button>
+      <button class="again-btn" id="againBtn">แปลงไฟล์ใหม่อีกครั้ง</button>
+    </div>
+    <div class="error-box" id="errorBox"></div>
+  </div>
+
+  <footer>
+    <div class="foot-title">✨ สร้างด้วยเทคนิคดีไซน์ทั้ง 7 ✨</div>
+    <div class="tech-badges">
+      <span class="badge">1️⃣ Glassmorphism</span>
+      <span class="badge">2️⃣ Animated Gradient</span>
+      <span class="badge">3️⃣ Particle Effects</span>
+      <span class="badge">4️⃣ Micro-interactions</span>
+      <span class="badge">5️⃣ 3D Tilt</span>
+      <span class="badge">6️⃣ Dark/Light Mode</span>
+      <span class="badge">7️⃣ Responsive Design</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+/* ================================================================
+   PDF Magic Converter — ทำงานฝั่ง client ทั้งหมด
+   ================================================================ */
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const $ = (id) => document.getElementById(id);
+
+/* ---------- เทคนิค 6: Theme toggle ---------- */
+const root = document.documentElement;
+$('themeToggle').addEventListener('click', () => {
+  const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  root.dataset.theme = next;
+  $('toggleKnob').textContent = next === 'dark' ? '🌙' : '☀️';
+  // แถบ URL บนมือถือเปลี่ยนสีตามธีม
+  $('metaTheme').content = next === 'dark' ? '#0a0a1a' : '#eef1fb';
+});
+
+/* ---------- เทคนิค 3: Particles ---------- */
+(() => {
+  const canvas = $('particles');
+  const ctx = canvas.getContext('2d');
+  let W, H, dots = [];
+  const resize = () => {
+    W = canvas.width = innerWidth;
+    H = canvas.height = innerHeight;
+  };
+  resize();
+  addEventListener('resize', resize);
+  const N = Math.min(70, Math.floor(innerWidth / 18));
+  for (let i = 0; i < N; i++) {
+    dots.push({
+      x: Math.random() * innerWidth,
+      y: Math.random() * innerHeight,
+      r: Math.random() * 2.2 + 0.6,
+      vx: (Math.random() - 0.5) * 0.35,
+      vy: (Math.random() - 0.5) * 0.35,
+      a: Math.random() * 0.5 + 0.15,
+      tw: Math.random() * Math.PI * 2,
+    });
+  }
+  const style = getComputedStyle(root);
+  function tick(t) {
+    ctx.clearRect(0, 0, W, H);
+    const col = getComputedStyle(root).getPropertyValue('--particle').trim();
+    for (const d of dots) {
+      d.x += d.vx; d.y += d.vy;
+      if (d.x < -10) d.x = W + 10; if (d.x > W + 10) d.x = -10;
+      if (d.y < -10) d.y = H + 10; if (d.y > H + 10) d.y = -10;
+      const twinkle = 0.6 + 0.4 * Math.sin(t / 900 + d.tw);
+      ctx.globalAlpha = d.a * twinkle;
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+
+/* ---------- เทคนิค 5: 3D Tilt on dropzone ---------- */
+const dz = $('dropzone');
+dz.addEventListener('mousemove', (e) => {
+  const r = dz.getBoundingClientRect();
+  const px = (e.clientX - r.left) / r.width - 0.5;
+  const py = (e.clientY - r.top) / r.height - 0.5;
+  dz.style.transform = `rotateY(${px * 10}deg) rotateX(${-py * 10}deg) translateZ(6px)`;
+});
+dz.addEventListener('mouseleave', () => { dz.style.transform = ''; });
+
+/* ---------- File selection ---------- */
+let currentFile = null;
+let selectedFormat = null;
+let outputBlob = null;
+let outputName = '';
+
+const fileInput = $('fileInput');
+dz.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) setFile(fileInput.files[0]);
+});
+
+['dragenter', 'dragover'].forEach(ev =>
+  dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); }));
+['dragleave', 'drop'].forEach(ev =>
+  dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); }));
+dz.addEventListener('drop', (e) => {
+  const f = [...e.dataTransfer.files].find(f =>
+    f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+  if (f) setFile(f);
+  else showError('กรุณาวางไฟล์ .pdf เท่านั้นนะ 😅');
+});
+
+function setFile(f) {
+  if (!(f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'))) {
+    showError('ไฟล์นี้ไม่ใช่ PDF — รองรับเฉพาะไฟล์ .pdf');
+    return;
+  }
+  currentFile = f;
+  $('fcName').textContent = f.name;
+  $('fcMeta').textContent = formatSize(f.size);
+  $('fileChip').classList.add('show');
+  hideError();
+  resetResult();
+  updateButton();
+}
+
+$('fcRemove').addEventListener('click', () => {
+  currentFile = null;
+  fileInput.value = '';
+  $('fileChip').classList.remove('show');
+  resetResult();
+  updateButton();
+});
+
+function formatSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(2) + ' MB';
+}
+
+/* ---------- Format selection ---------- */
+$('formats').addEventListener('click', (e) => {
+  const card = e.target.closest('.fmt');
+  if (!card) return;
+  document.querySelectorAll('.fmt').forEach(c => c.classList.remove('selected'));
+  card.classList.add('selected');
+  selectedFormat = card.dataset.fmt;
+  resetResult();
+  updateButton();
+});
+
+function updateButton() {
+  const btn = $('convertBtn');
+  btn.disabled = !(currentFile && selectedFormat);
+  $('convertLabel').textContent = (currentFile && selectedFormat)
+    ? `🚀 แปลงเป็น .${selectedFormat.toUpperCase()}`
+    : '🚀 เริ่มแปลงไฟล์';
+}
+
+/* ---------- PDF extraction (layout-aware) ----------
+   คืนค่า: pages = [ [ [col, col, ...], ...rows ], ...pages ]      */
+async function extractPdf(file, onProgress) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pages = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    const rows = [];
+    for (const it of tc.items) {
+      if (!it.str || !it.str.trim()) continue;
+      const x = it.transform[4], y = it.transform[5];
+      let row = rows.find(r => Math.abs(r.y - y) < 3.5);
+      if (!row) { row = { y, items: [] }; rows.push(row); }
+      row.items.push({ x, w: it.width || 0, str: it.str });
+    }
+    rows.sort((a, b) => b.y - a.y);
+    const pageRows = rows.map(r => {
+      r.items.sort((a, b) => a.x - b.x);
+      const cols = [];
+      let prevEnd = null;
+      for (const it of r.items) {
+        if (prevEnd === null || it.x - prevEnd > 14) {
+          cols.push(it.str);
+        } else {
+          cols[cols.length - 1] += it.str;
+        }
+        prevEnd = Math.max(prevEnd ?? -Infinity, it.x + it.w);
+      }
+      return cols.map(c => c.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    }).filter(r => r.length);
+    pages.push(pageRows);
+    onProgress((p / pdf.numPages) * 0.8, `กำลังอ่านหน้า ${p} / ${pdf.numPages}…`);
+  }
+  return pages;
+}
+
+/* ---------- Smart OCR (Tesseract.js — ไทย + อังกฤษ) ---------- */
+let forceOcr = false;
+let lastUsedOcr = false;
+const ocrSwitch = $('ocrSwitch');
+function setOcrMode(on) {
+  forceOcr = on;
+  ocrSwitch.classList.toggle('on', on);
+  ocrSwitch.setAttribute('aria-checked', String(on));
+  $('ocrModeLabel').textContent = on ? 'บังคับ OCR' : 'อัตโนมัติ';
+  $('ocrSub').textContent = on
+    ? 'บังคับใช้ OCR ทุกไฟล์: อ่านตัวอักษรจากภาพหน้ากระดาษโดยตรง (ช้ากว่าแต่ใช้ได้กับไฟล์สแกนเสมอ)'
+    : 'โหมดอัตโนมัติ: ถ้าเป็น PDF สแกน/ภาพถ่าย ระบบจะอ่านตัวอักษรไทย-อังกฤษด้วย OCR ให้เอง';
+}
+ocrSwitch.addEventListener('click', () => setOcrMode(!forceOcr));
+ocrSwitch.addEventListener('keydown', (e) => {
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setOcrMode(!forceOcr); }
+});
+
+let ocrWorkerPromise = null;
+function getOcrWorker(onStatus) {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = (async () => {
+      onStatus?.('กำลังโหลดโมเดล OCR ภาษาไทย (เฉพาะครั้งแรก อาจใช้เวลาสักครู่)…');
+      const worker = await Tesseract.createWorker(['tha', 'eng'], 1, {
+        logger: (m) => {
+          if (m.status === 'recognizing text' && typeof ocrPageProgress === 'function') {
+            ocrPageProgress(m.progress);
+          }
+        },
+      });
+      // ค่าที่ช่วยงานเอกสารไทย: ไม่ตัดคำด้วย dictionary มากเกินไป และคงช่องว่างเดิม
+      await worker.setParameters({ preserve_interword_spaces: '1' });
+      return worker;
+    })();
+    ocrWorkerPromise.catch(() => { ocrWorkerPromise = null; });
+  }
+  return ocrWorkerPromise;
+}
+let ocrPageProgress = null;
+
+/* เรนเดอร์หน้า PDF เป็นภาพความละเอียดสูง แล้วปรับภาพให้ OCR อ่านง่ายขึ้น
+   (grayscale + Otsu binarization) */
+async function renderPageForOcr(page) {
+  const base = page.getViewport({ scale: 1 });
+  // เป้าหมาย ~2000px ด้านยาวสุด (≈240 DPI สำหรับ A4) — พอสำหรับ OCR ไทยและเร็ว
+  // ไฟล์สแกนความละเอียดสูงจะถูก "ย่อ" ลงมา ไม่ใช่ขยายเพิ่มจนเป็นภาพยักษ์
+  const scale = Math.min(3, 2000 / Math.max(base.width, base.height));
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // intent:'print' → ไม่พึ่ง requestAnimationFrame (ทำงานได้แม้แท็บถูกซ่อน) และคมชัดกว่า
+  await page.render({ canvasContext: ctx, viewport, intent: 'print' }).promise;
+
+  // --- grayscale + Otsu threshold ---
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+  const hist = new Uint32Array(256);
+  const n = d.length / 4;
+  const gray = new Uint8Array(n);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+    const g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+    gray[j] = g;
+    hist[g]++;
+  }
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, maxVar = 0, threshold = 127;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = n - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > maxVar) { maxVar = between; threshold = t; }
+  }
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+    const v = gray[j] > threshold ? 255 : 0;
+    d[i] = d[i + 1] = d[i + 2] = v;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+/* จัดกลุ่มคำจากผล OCR เป็นแถว/คอลัมน์ด้วยพิกัด bbox (แบบเดียวกับโหมดข้อความ) */
+function ocrWordsToRows(words) {
+  const lines = [];
+  for (const w of words) {
+    const text = (w.text || '').trim();
+    if (!text) continue;
+    const cy = (w.bbox.y0 + w.bbox.y1) / 2;
+    const h = w.bbox.y1 - w.bbox.y0;
+    let line = lines.find(l => Math.abs(l.cy - cy) < Math.max(8, l.h * 0.6));
+    if (!line) { line = { cy, h, words: [] }; lines.push(line); }
+    line.words.push(w);
+    line.cy = (line.cy + cy) / 2;
+    line.h = Math.max(line.h, h);
+  }
+  lines.sort((a, b) => a.cy - b.cy);
+  return lines.map(l => {
+    l.words.sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    // ความกว้างเฉลี่ยต่อตัวอักษร → ใช้ตัดสินว่าช่องว่างไหนคือ "คอลัมน์ใหม่"
+    let charW = 0, chars = 0;
+    for (const w of l.words) { charW += w.bbox.x1 - w.bbox.x0; chars += w.text.trim().length || 1; }
+    charW = charW / Math.max(1, chars);
+    const colGap = Math.max(20, charW * 2.6);
+    const cols = [];
+    let prevEnd = null;
+    for (const w of l.words) {
+      const t = w.text.trim();
+      const gap = prevEnd === null ? Infinity : w.bbox.x0 - prevEnd;
+      if (gap > colGap) {
+        cols.push(t);
+      } else {
+        // Tesseract ชอบตัดภาษาไทยเป็น "คำ" ทีละตัวอักษร → ดูระยะห่างจริง:
+        // ชิดกัน = คำเดียวกัน เชื่อมติดกัน, ห่างจริงค่อยเว้นวรรค
+        // ไทย-ไทยใช้เกณฑ์กว้างกว่า เพราะช่องว่างจริงในภาษาไทยมักกว้าง ≥ 1 ตัวอักษร
+        const prevCh = cols[cols.length - 1].slice(-1);
+        const bothThai = /[฀-๿]/.test(prevCh) && /[฀-๿]/.test(t.charAt(0));
+        const sep = gap > charW * (bothThai ? 0.9 : 0.45) ? ' ' : '';
+        cols[cols.length - 1] += sep + t;
+      }
+      prevEnd = w.bbox.x1;
+    }
+    return cols.map(c => c.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  }).filter(r => r.length);
+}
+
+async function extractPdfOcr(file, onProgress) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const worker = await getOcrWorker((msg) => onProgress(0.03, msg));
+  const pages = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const frac = (done) => 0.05 + ((p - 1 + done) / pdf.numPages) * 0.82;
+    onProgress(frac(0), `🧠 OCR หน้า ${p} / ${pdf.numPages} — กำลังเตรียมภาพ…`);
+    const page = await pdf.getPage(p);
+    const canvas = await renderPageForOcr(page);
+    ocrPageProgress = (pr) =>
+      onProgress(frac(pr), `🧠 OCR หน้า ${p} / ${pdf.numPages} — อ่านตัวอักษร ${Math.round(pr * 100)}%`);
+    const { data } = await worker.recognize(canvas);
+    ocrPageProgress = null;
+    const words = data.words || [];
+    pages.push(ocrWordsToRows(words));
+    canvas.width = canvas.height = 0;
+  }
+  return pages;
+}
+
+/* ---------- Converters ---------- */
+function baseName() {
+  return currentFile.name.replace(/\.pdf$/i, '');
+}
+
+async function toDocx(pages) {
+  const { Document, Packer, Paragraph, TextRun, PageBreak } = window.docx;
+  const children = [];
+  pages.forEach((rows, pi) => {
+    if (pi > 0) children.push(new Paragraph({ children: [new PageBreak()] }));
+    rows.forEach(cols => {
+      children.push(new Paragraph({
+        children: [new TextRun({ text: cols.join('\t'), font: 'TH Sarabun New', size: 28 })],
+      }));
+    });
+    if (!rows.length) children.push(new Paragraph({ text: '' }));
+  });
+  const doc = new Document({ sections: [{ children }] });
+  return await Packer.toBlob(doc);
+}
+
+function toDocHtml(pages) {
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let body = '';
+  pages.forEach((rows, pi) => {
+    if (pi > 0) body += '<br clear="all" style="page-break-before:always">';
+    rows.forEach(cols => {
+      body += `<p style="margin:0 0 4pt 0">${cols.map(esc).join('&nbsp;&nbsp;&nbsp;&nbsp;')}</p>`;
+    });
+  });
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns:w="urn:schemas-microsoft-com:office:word"
+xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>${esc(baseName())}</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+<style>body{font-family:'TH Sarabun New','Angsana New',sans-serif;font-size:14pt}</style>
+</head><body>${body}</body></html>`;
+  return new Blob(['﻿', html], { type: 'application/msword' });
+}
+
+function pagesToAoa(pages) {
+  // รวมทุกหน้าเป็นตารางเดียว โดยคั่นแต่ละหน้าด้วยแถวว่าง
+  const aoa = [];
+  pages.forEach((rows, pi) => {
+    if (pi > 0) aoa.push([]);
+    rows.forEach(cols => aoa.push(cols));
+  });
+  return aoa;
+}
+
+function toSheet(pages, bookType) {
+  const wb = XLSX.utils.book_new();
+  pages.forEach((rows, pi) => {
+    const ws = XLSX.utils.aoa_to_sheet(rows.length ? rows : [['']]);
+    // ปรับความกว้างคอลัมน์อัตโนมัติแบบคร่าว ๆ
+    const maxCols = Math.max(1, ...rows.map(r => r.length));
+    ws['!cols'] = Array.from({ length: maxCols }, (_, c) => ({
+      wch: Math.min(60, Math.max(10, ...rows.map(r => (r[c] || '').length + 2))),
+    }));
+    XLSX.utils.book_append_sheet(wb, ws, `Page ${pi + 1}`.slice(0, 31));
+  });
+  const out = XLSX.write(wb, { bookType, type: 'array' });
+  const mime = bookType === 'xlsx'
+    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    : 'application/vnd.ms-excel';
+  return new Blob([out], { type: mime });
+}
+
+function toCsv(pages) {
+  const aoa = pagesToAoa(pages);
+  const csv = aoa.map(row =>
+    row.map(c => /[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c).join(',')
+  ).join('\r\n');
+  return new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' });
+}
+
+/* ---------- Convert flow ---------- */
+$('convertBtn').addEventListener('click', async () => {
+  if (!currentFile || !selectedFormat) return;
+  const btn = $('convertBtn');
+  btn.disabled = true;
+  hideError();
+  resetResult();
+  showProgress(0.02, 'กำลังเปิดไฟล์ PDF…');
+
+  try {
+    let pages;
+    lastUsedOcr = false;
+    if (forceOcr) {
+      lastUsedOcr = true;
+      pages = await extractPdfOcr(currentFile, showProgress);
+    } else {
+      pages = await extractPdf(currentFile, showProgress);
+      const quickRows = pages.reduce((s, p) => s + p.length, 0);
+      if (quickRows === 0) {
+        // Smart OCR: ไฟล์นี้ไม่มีข้อความฝังอยู่ → เป็นภาพสแกน สลับไป OCR อัตโนมัติ
+        lastUsedOcr = true;
+        showProgress(0.03, '🧠 ตรวจพบ PDF แบบภาพสแกน — สลับไปใช้ Smart OCR ให้อัตโนมัติ…');
+        pages = await extractPdfOcr(currentFile, showProgress);
+      }
+    }
+    const totalRows = pages.reduce((s, p) => s + p.length, 0);
+    if (totalRows === 0) {
+      throw new Error('OCR อ่านตัวอักษรจากไฟล์นี้ไม่ได้เลย — ภาพอาจเบลอ ความละเอียดต่ำ หรือไฟล์ถูกป้องกันไว้');
+    }
+    showProgress(0.9, 'กำลังสร้างไฟล์ปลายทาง…');
+
+    switch (selectedFormat) {
+      case 'docx': outputBlob = await toDocx(pages); break;
+      case 'doc':  outputBlob = toDocHtml(pages); break;
+      case 'xlsx': outputBlob = toSheet(pages, 'xlsx'); break;
+      case 'xls':  outputBlob = toSheet(pages, 'biff8'); break;
+      case 'csv':  outputBlob = toCsv(pages); break;
+    }
+    outputName = `${baseName()}.${selectedFormat}`;
+    showProgress(1, 'เสร็จสิ้น!');
+
+    setTimeout(() => {
+      $('progressWrap').classList.remove('show');
+      $('resultMeta').textContent =
+        `${outputName} • ${formatSize(outputBlob.size)} • ${pages.length} หน้า / ${totalRows} แถวข้อมูล` +
+        (lastUsedOcr ? ' • 🧠 อ่านด้วย Smart OCR' : '');
+      $('result').classList.add('show');
+    }, 450);
+  } catch (err) {
+    console.error(err);
+    $('progressWrap').classList.remove('show');
+    showError('❌ ' + (err.message || 'เกิดข้อผิดพลาดระหว่างแปลงไฟล์'));
+  } finally {
+    btn.disabled = !(currentFile && selectedFormat);
+  }
+});
+
+$('downloadBtn').addEventListener('click', () => {
+  if (!outputBlob) return;
+  const url = URL.createObjectURL(outputBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = outputName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+});
+
+$('againBtn').addEventListener('click', () => {
+  resetResult();
+  updateButton();
+});
+
+/* ---------- UI helpers ---------- */
+function showProgress(frac, text) {
+  $('progressWrap').classList.add('show');
+  $('progressFill').style.width = Math.round(frac * 100) + '%';
+  if (text) $('progressText').textContent = text;
+}
+function resetResult() {
+  outputBlob = null;
+  $('result').classList.remove('show');
+  $('progressWrap').classList.remove('show');
+  $('progressFill').style.width = '0%';
+}
+function showError(msg) {
+  const box = $('errorBox');
+  box.textContent = msg;
+  box.classList.remove('show');
+  void box.offsetWidth;
+  box.classList.add('show');
+}
+function hideError() { $('errorBox').classList.remove('show'); }
+
+/* ---------- PWA: service worker (ติดตั้งเป็นแอป + ใช้ออฟไลน์ได้) ---------- */
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW ไม่ทำงาน:', e));
+  });
+}
+</script>
+</body>
+</html>
