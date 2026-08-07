@@ -358,23 +358,54 @@
   .ocr-info { flex: 1; min-width: 180px; }
   .ocr-title { font-weight: 500; font-size: 0.95rem; }
   .ocr-sub { color: var(--text-dim); font-size: 0.78rem; font-weight: 300; }
-  .ocr-switch {
-    position: relative; width: 52px; height: 28px; border-radius: 20px;
-    background: var(--glass); border: 1px solid var(--glass-border);
-    cursor: pointer; transition: all 0.35s ease; flex-shrink: 0;
+  /* ปุ่มเลือกโหมด OCR + tooltip อธิบายว่าเหมาะกับไฟล์แบบไหน */
+  .seg { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; margin-top: 4px; }
+  .seg-btn {
+    position: relative; flex: 1; min-width: 110px;
+    padding: 10px 12px; border-radius: 12px;
+    border: 1.5px solid var(--glass-border); background: var(--glass);
+    color: var(--text-dim); font-family: inherit; font-size: 0.88rem; font-weight: 500;
+    cursor: pointer; white-space: nowrap;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
-  .ocr-switch::after {
-    content: ''; position: absolute; top: 3px; left: 4px;
-    width: 20px; height: 20px; border-radius: 50%;
-    background: var(--text-dim);
-    transition: all 0.35s cubic-bezier(0.68, -0.4, 0.27, 1.4);
+  .seg-btn:hover { transform: translateY(-2px); background: var(--glass-hover); color: var(--text); }
+  .seg-btn.selected {
+    color: var(--text); border-color: var(--accent2);
+    background: var(--glass-hover);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent2) 30%, transparent),
+                0 8px 22px -10px var(--accent2);
   }
-  .ocr-switch.on {
-    background: linear-gradient(135deg, var(--accent1), var(--accent2));
-    border-color: transparent;
+  .seg-btn::after {
+    content: attr(data-tip);
+    position: absolute; bottom: calc(100% + 12px); left: 50%;
+    transform: translateX(-50%) translateY(6px) scale(0.97);
+    width: min(250px, 72vw);
+    padding: 10px 12px; border-radius: 12px;
+    background: color-mix(in srgb, var(--bg) 88%, var(--accent1));
+    border: 1px solid var(--glass-border);
+    color: var(--text); font-size: 0.78rem; font-weight: 300; line-height: 1.5;
+    white-space: normal; text-align: left;
+    opacity: 0; pointer-events: none; z-index: 30;
+    box-shadow: 0 14px 34px -10px var(--shadow);
+    transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
-  .ocr-switch.on::after { transform: translateX(23px); background: white; }
-  .ocr-mode-label { font-size: 0.8rem; color: var(--text-dim); flex-shrink: 0; }
+  .seg-btn::before {
+    content: ''; position: absolute; bottom: calc(100% + 5px); left: 50%;
+    transform: translateX(-50%) rotate(45deg);
+    width: 12px; height: 12px;
+    background: color-mix(in srgb, var(--bg) 88%, var(--accent1));
+    border-right: 1px solid var(--glass-border); border-bottom: 1px solid var(--glass-border);
+    opacity: 0; pointer-events: none; z-index: 31;
+    transition: opacity 0.25s ease;
+  }
+  .seg-btn:hover::after, .seg-btn:focus-visible::after {
+    opacity: 1; transform: translateX(-50%) translateY(0) scale(1);
+  }
+  .seg-btn:hover::before, .seg-btn:focus-visible::before { opacity: 1; }
+  .seg-btn:first-child::after { left: 0; transform: translateX(0) translateY(6px) scale(0.97); }
+  .seg-btn:first-child:hover::after, .seg-btn:first-child:focus-visible::after { transform: translateX(0) translateY(0) scale(1); }
+  .seg-btn:last-child::after { left: auto; right: 0; transform: translateX(0) translateY(6px) scale(0.97); }
+  .seg-btn:last-child:hover::after, .seg-btn:last-child:focus-visible::after { transform: translateX(0) translateY(0) scale(1); }
   .ocr-badge {
     display: inline-block; padding: 2px 10px; border-radius: 999px;
     font-size: 0.72rem; color: white;
@@ -452,15 +483,10 @@
     .theme-toggle { width: 74px; height: 44px; border-radius: 26px; }
     .toggle-knob { width: 36px; height: 36px; top: 3px; left: 4px; font-size: 1.05rem; }
     :root[data-theme="light"] .toggle-knob { transform: translateX(30px); }
-    .ocr-switch { width: 62px; height: 38px; }
-    .ocr-switch::after { width: 30px; height: 30px; top: 3px; }
-    .ocr-switch.on::after { transform: translateX(24px); }
-
     .ocr-row { padding: 12px 14px; gap: 10px; }
-    .ocr-info { min-width: 100%; order: 3; }
-    .ocr-brain { order: 1; }
-    .ocr-mode-label { order: 2; margin-left: auto; }
-    .ocr-switch { order: 2; }
+    /* ปุ่มโหมด OCR บนมือถือ: เรียงเต็มแถว แตะง่าย ≥44px */
+    .seg { gap: 8px; }
+    .seg-btn { min-width: 100%; padding: 12px; font-size: 0.92rem; }
 
     .convert-btn { padding: 16px; font-size: 1.1rem; border-radius: 16px; }
     .download-btn { padding: 14px 28px; width: 100%; justify-content: center; }
@@ -553,8 +579,14 @@
         <div class="ocr-title">Smart OCR ภาษาไทย <span class="ocr-badge">AI</span></div>
         <div class="ocr-sub" id="ocrSub">โหมดอัตโนมัติ: ถ้าเป็น PDF สแกน/ภาพถ่าย ระบบจะอ่านตัวอักษรไทย-อังกฤษด้วย OCR ให้เอง</div>
       </div>
-      <span class="ocr-mode-label" id="ocrModeLabel">อัตโนมัติ</span>
-      <div class="ocr-switch" id="ocrSwitch" title="เปิด = บังคับใช้ OCR ทุกไฟล์" role="switch" aria-checked="false" tabindex="0"></div>
+      <div class="seg" id="ocrSeg" role="radiogroup" aria-label="เลือกโหมด OCR">
+        <button type="button" class="seg-btn selected" data-mode="auto"
+          data-tip="🤖 ระบบตัดสินใจให้เอง: PDF ปกติใช้วิธีอ่านข้อความตรง (เร็วมาก) ถ้าเป็นไฟล์สแกนจะสลับไป OCR แบบสะอาดอัตโนมัติ — ไม่แน่ใจ เลือกปุ่มนี้ได้เลย">🤖 อัตโนมัติ</button>
+        <button type="button" class="seg-btn" data-mode="clean"
+          data-tip="🧼 บังคับใช้ OCR พร้อมคัดกรอง ตัดตรายาง ลายเซ็น รอยหมึก โลโก้ทิ้ง เหลือเนื้อความหลักล้วน ๆ — เหมาะกับหนังสือราชการ เอกสารสแกนที่มีตราประทับ">🧼 OCR สะอาด</button>
+        <button type="button" class="seg-btn" data-mode="full"
+          data-tip="📷 บังคับใช้ OCR เก็บทุกตัวอักษรที่อ่านได้ แม้ความมั่นใจต่ำ — เหมาะกับภาพถ่าย/สแกนคุณภาพต่ำ ลายมือ หรือเมื่อโหมดสะอาดตัดข้อความที่ต้องการหายไป">📷 OCR เก็บหมด</button>
+      </div>
     </div>
     <button class="convert-btn" id="convertBtn" disabled>
       <span class="shine"></span>
@@ -774,23 +806,26 @@ async function extractPdf(file, onProgress) {
   return pages;
 }
 
-/* ---------- Smart OCR (Tesseract.js — ไทย + อังกฤษ) ---------- */
-let forceOcr = false;
+/* ---------- Smart OCR (Tesseract.js — ไทย + อังกฤษ) ----------
+   3 โหมด: auto = ระบบเลือกให้, clean = บังคับ OCR + ตัดตรายาง, full = บังคับ OCR เก็บหมด */
+let ocrMode = 'auto';
 let lastUsedOcr = false;
-const ocrSwitch = $('ocrSwitch');
-function setOcrMode(on) {
-  forceOcr = on;
-  ocrSwitch.classList.toggle('on', on);
-  ocrSwitch.setAttribute('aria-checked', String(on));
-  $('ocrModeLabel').textContent = on ? 'บังคับ OCR' : 'อัตโนมัติ';
-  $('ocrSub').textContent = on
-    ? 'บังคับใช้ OCR ทุกไฟล์: อ่านตัวอักษรจากภาพหน้ากระดาษโดยตรง (ช้ากว่าแต่ใช้ได้กับไฟล์สแกนเสมอ)'
-    : 'โหมดอัตโนมัติ: ถ้าเป็น PDF สแกน/ภาพถ่าย ระบบจะอ่านตัวอักษรไทย-อังกฤษด้วย OCR ให้เอง';
+const segBtns = [...document.querySelectorAll('#ocrSeg .seg-btn')];
+function setOcrMode(mode) {
+  ocrMode = mode;
+  segBtns.forEach(b => {
+    const on = b.dataset.mode === mode;
+    b.classList.toggle('selected', on);
+    b.setAttribute('aria-checked', String(on));
+  });
+  // มือถือไม่มี hover → แสดงคำอธิบายของโหมดที่เลือกไว้ใต้หัวข้อเสมอ
+  $('ocrSub').textContent = segBtns.find(b => b.dataset.mode === mode).dataset.tip;
 }
-ocrSwitch.addEventListener('click', () => setOcrMode(!forceOcr));
-ocrSwitch.addEventListener('keydown', (e) => {
-  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setOcrMode(!forceOcr); }
+$('ocrSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('.seg-btn');
+  if (b) setOcrMode(b.dataset.mode);
 });
+setOcrMode('auto');
 
 let ocrWorkerPromise = null;
 function getOcrWorker(onStatus) {
@@ -883,12 +918,16 @@ async function renderPageForOcr(page, mode = 'gray') {
   return canvas;
 }
 
-/* จัดกลุ่มคำจากผล OCR เป็นแถว/คอลัมน์ด้วยพิกัด bbox (แบบเดียวกับโหมดข้อความ) */
-function ocrWordsToRows(words) {
+/* จัดกลุ่มคำจากผล OCR เป็นแถว/คอลัมน์ด้วยพิกัด bbox (แบบเดียวกับโหมดข้อความ)
+   พร้อมกรอง "เนื้อความหลักเท่านั้น": คำจากตรายาง/ลายเซ็น/โลโก้มี confidence ต่ำ
+   (วัดจริง: เนื้อความพิมพ์ได้ 90+, ตรายางได้ 4-58) → ตัดทิ้งทั้งระดับคำและระดับแถว */
+function ocrWordsToRows(words, filterLevel = 'clean') {
+  const clean = filterLevel === 'clean';
   const lines = [];
   for (const w of words) {
     const text = (w.text || '').trim();
     if (!text) continue;
+    if (clean && w.confidence != null && w.confidence < 60) continue; // คำจากตรายาง/รอยหมึก
     const cy = (w.bbox.y0 + w.bbox.y1) / 2;
     const h = w.bbox.y1 - w.bbox.y0;
     let line = lines.find(l => Math.abs(l.cy - cy) < Math.max(8, l.h * 0.6));
@@ -924,13 +963,19 @@ function ocrWordsToRows(words) {
       prevEnd = w.bbox.x1;
     }
     const out = cols.map(c => c.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    // กรองระดับแถว: แถวที่เฉลี่ยความมั่นใจต่ำ หรือแทบไม่มีตัวอักษรจริง = เศษตรายาง/สัญลักษณ์
+    if (clean) {
+      const avgConf = l.words.reduce((s, w) => s + (w.confidence ?? 100), 0) / l.words.length;
+      const letters = (out.join('').match(/[฀-๿A-Za-z0-9]/g) || []).length;
+      if (avgConf < 70 || letters < 2) return null;
+    }
     out.x0 = l.words[0]?.bbox.x0 ?? 0;
     out.x1 = prevEnd ?? 0;
     return out;
-  }).filter(r => r.length);
+  }).filter(r => r && r.length);
 }
 
-async function extractPdfOcr(file, onProgress) {
+async function extractPdfOcr(file, onProgress, filterLevel = 'clean') {
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
   const worker = await getOcrWorker((msg) => onProgress(0.03, msg));
@@ -944,7 +989,7 @@ async function extractPdfOcr(file, onProgress) {
       onProgress(frac(pr), `🧠 OCR หน้า ${p} / ${pdf.numPages} — อ่านตัวอักษร ${Math.round(pr * 100)}%`);
     const { data } = await worker.recognize(canvas);
     ocrPageProgress = null;
-    const pageRows = ocrWordsToRows(data.words || []);
+    const pageRows = ocrWordsToRows(data.words || [], filterLevel);
     pageRows.pageW = canvas.width;
     pages.push(pageRows);
     canvas.width = canvas.height = 0;
@@ -1094,17 +1139,17 @@ $('convertBtn').addEventListener('click', async () => {
   try {
     let pages;
     lastUsedOcr = false;
-    if (forceOcr) {
+    if (ocrMode !== 'auto') {
       lastUsedOcr = true;
-      pages = await extractPdfOcr(currentFile, showProgress);
+      pages = await extractPdfOcr(currentFile, showProgress, ocrMode);
     } else {
       pages = await extractPdf(currentFile, showProgress);
       const quickRows = pages.reduce((s, p) => s + p.length, 0);
       if (quickRows === 0) {
-        // Smart OCR: ไฟล์นี้ไม่มีข้อความฝังอยู่ → เป็นภาพสแกน สลับไป OCR อัตโนมัติ
+        // Smart OCR: ไฟล์นี้ไม่มีข้อความฝังอยู่ → เป็นภาพสแกน สลับไป OCR แบบสะอาดอัตโนมัติ
         lastUsedOcr = true;
         showProgress(0.03, '🧠 ตรวจพบ PDF แบบภาพสแกน — สลับไปใช้ Smart OCR ให้อัตโนมัติ…');
-        pages = await extractPdfOcr(currentFile, showProgress);
+        pages = await extractPdfOcr(currentFile, showProgress, 'clean');
       }
     }
     const totalRows = pages.reduce((s, p) => s + p.length, 0);
