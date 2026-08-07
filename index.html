@@ -951,6 +951,16 @@ async function geminiRecognize(b64jpeg, apiKeys) {
   throw lastErr || new Error('เรียก Gemini ไม่สำเร็จ');
 }
 
+/* Gemini ตอบได้หลายทรง: {"blocks":[...]} / [...] / [{"blocks":[...]},...] → แผ่ให้แบนเสมอ */
+function flattenAiBlocks(x) {
+  if (Array.isArray(x)) return x.flatMap(flattenAiBlocks);
+  if (x && typeof x === 'object') {
+    if (x.blocks) return flattenAiBlocks(x.blocks);
+    if (x.cols !== undefined) return [x];
+  }
+  return [];
+}
+
 async function extractPdfAi(file, onProgress) {
   const apiKeys = getAiKeys();
   if (!apiKeys.length) {
@@ -965,7 +975,7 @@ async function extractPdfAi(file, onProgress) {
     const page = await pdf.getPage(p);
     const b64 = await renderPageForAi(page);
     const result = await geminiRecognize(b64, apiKeys);
-    const rows = (result.blocks || []).map(b => {
+    const rows = flattenAiBlocks(result).map(b => {
       const cols = (Array.isArray(b.cols) ? b.cols : [String(b.cols || '')])
         .map(c => String(c).trim()).filter(Boolean);
       if (!cols.length) return null;
