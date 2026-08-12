@@ -17,6 +17,10 @@ jobs:
           node-version: 20
       - name: Install Railway CLI
         run: npm install -g @railway/cli
+      - name: Link project
+        run: railway link --project 5d468e43-20cb-47cc-a49d-ef0b84dc7f3e --environment production --service 543f358a-8154-4342-b333-0a91f9ad2853
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       - name: Deploy
         run: railway up --detach --service 543f358a-8154-4342-b333-0a91f9ad2853
         env:
