@@ -19,12 +19,15 @@ const MIME = {
 };
 
 const PROMPT = `Transcribe this scanned Thai document page accurately.
-Return ONLY JSON: {"blocks":[{"cols":["text"],"align":"left|center|right","indent":true|false}]}
+Return ONLY JSON: {"blocks":[ ...one object per element, in reading order... ]}
+Two element types:
+1. Paragraph: {"type":"paragraph","text":"...","align":"left|center|right","indent":true|false}
+2. Table:     {"type":"table","rows":[["header1","header2"],["cell1","cell2"]]}
 Rules:
-- Each block = one full paragraph or one table row, in reading order.
-- Merge wrapped lines of the same paragraph into a single block (do not split by visual line).
-- For tabular data, put each cell as a separate string in "cols"; for normal paragraphs use a single string.
-- "align" reflects the visual alignment on the page; "indent" true when the paragraph starts with a first-line indent.
+- If the page contains a TABLE (grid lines or clearly columnar data), you MUST return it as a "table" element with every row and every cell in order — never flatten a table into paragraphs.
+- Every table row must have the same number of cells as its header row (use "" for empty cells).
+- Merge wrapped lines of the same paragraph or same cell into one string (do not split by visual line).
+- "align" reflects visual alignment; "indent" true when the paragraph has a first-line indent.
 - IGNORE rubber stamps, handwritten signatures, logos, and watermark artifacts entirely.
 - Preserve Thai numerals and original spelling exactly as printed. Do not translate.`;
 
@@ -42,6 +45,8 @@ function flatten(x) {
   if (Array.isArray(x)) return x.flatMap(flatten);
   if (x && typeof x === 'object') {
     if (x.blocks) return flatten(x.blocks);
+    if (x.type === 'table' && Array.isArray(x.rows)) return [x];
+    if (x.type === 'paragraph' || x.text !== undefined) return [x];
     if (x.cols !== undefined) return [x];
   }
   return [];
