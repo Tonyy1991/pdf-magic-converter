@@ -80,7 +80,9 @@ async function ocrOnce(b64) {
               { inline_data: { mime_type: 'image/jpeg', data: b64 } },
               { text: PROMPT },
             ]}],
-            generationConfig: { response_mime_type: 'application/json', temperature: 0 },
+            // ปิด thinking: งาน OCR ไม่ต้องคิดยาว (หน้าตารางแน่นเคยทำให้คิดวนจน timeout)
+            generationConfig: { response_mime_type: 'application/json', temperature: 0,
+              maxOutputTokens: 32768, thinkingConfig: { thinkingBudget: 0 } },
           }),
         }
       );

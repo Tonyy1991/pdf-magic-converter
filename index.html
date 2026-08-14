@@ -927,7 +927,9 @@ async function geminiRecognize(b64jpeg, apiKeys) {
                 { inline_data: { mime_type: 'image/jpeg', data: b64jpeg } },
                 { text: AI_PROMPT },
               ]}],
-              generationConfig: { response_mime_type: 'application/json', temperature: 0 },
+              // ปิด thinking: งาน OCR ไม่ต้องคิดยาว (หน้าตารางแน่น ๆ เคยทำให้คิดวน 3 นาทีจน timeout)
+              generationConfig: { response_mime_type: 'application/json', temperature: 0,
+                maxOutputTokens: 32768, thinkingConfig: { thinkingBudget: 0 } },
             }),
           }
         );
