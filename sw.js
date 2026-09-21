@@ -1,6 +1,6 @@
 /* Service Worker — PDF Magic Converter
    ให้เปิดใช้แบบออฟไลน์ได้หลังโหลดครั้งแรก (app shell + ไลบรารี CDN + โมเดล OCR) */
-const CACHE = 'pdf-magic-v3';
+const CACHE = 'pdf-magic-v4';
 const SHELL = [
   './',
   './index.html',
@@ -28,6 +28,8 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  // API ของเซิร์ฟเวอร์กลาง (สถานะโควตา) ต้องสดเสมอ ห้ามแคช
+  if (url.pathname.includes('/api/')) return;
   // แคชเฉพาะไฟล์แอปตัวเอง + ไลบรารี/โมเดลจาก CDN ที่เชื่อถือได้
   const cacheable =
     url.origin === location.origin ||
@@ -36,7 +38,22 @@ self.addEventListener('fetch', (e) => {
      'tessdata.projectnaptha.com'].includes(url.hostname);
   if (!cacheable) return;
 
-  // stale-while-revalidate: ตอบจากแคชทันที แล้วอัปเดตเบื้องหลัง
+  // หน้าเว็บ: network-first — แก้บั๊กแล้วผู้ใช้ได้ของใหม่ทันที ไม่ต้องรอเปิดรอบสอง (ออฟไลน์ค่อยใช้แคช)
+  if (req.mode === 'navigate') {
+    e.respondWith(
+      // cache:'no-cache' = บังคับถามเซิร์ฟเวอร์เสมอ (ไม่งั้น HTTP cache ของเบราว์เซอร์อาจส่งหน้าเก่าให้อีกชั้น)
+      fetch(req.url, { cache: 'no-cache' }).then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy));
+        }
+        return res;
+      }).catch(() => caches.match(req).then((hit) => hit || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // ที่เหลือ (ไลบรารี/โมเดล/ไอคอน): stale-while-revalidate ตอบจากแคชทันที แล้วอัปเดตเบื้องหลัง
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(req);

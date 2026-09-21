@@ -443,6 +443,9 @@
     font-weight: 400;
   }
   .ai-key-link:hover { text-decoration: underline; }
+  /* สถานะโควตาเซิร์ฟเวอร์กลาง — ดูได้เลยว่า API หมดหรือยัง */
+  .ai-status { width: 100%; font-size: 0.78rem; font-weight: 300; color: var(--text-dim); }
+  .ai-status:empty { display: none; }
 
   .error-box {
     display: none; margin-top: 16px; padding: 14px 18px;
@@ -626,6 +629,7 @@
         <button type="button" class="ai-key-save" id="aiKeySave">💾 บันทึก</button>
         <a class="ai-key-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">
           🔑 ขอ key ฟรีที่ aistudio.google.com</a>
+        <div class="ai-status" id="aiStatus" aria-live="polite"></div>
       </div>
     </div>
     <button class="convert-btn" id="convertBtn" disabled>
@@ -803,47 +807,59 @@ function updateButton() {
     : '🚀 เริ่มแปลงไฟล์';
 }
 
+/* เปิด PDF พร้อม CMap + ฟอนต์มาตรฐาน — ไฟล์ที่ไม่ฝังฟอนต์จะได้ไม่เรนเดอร์ออกมาเป็นหน้าโล่ง ๆ */
+const PDFJS_ASSETS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/';
+function openPdf(data) {
+  return pdfjsLib.getDocument({
+    data, cMapUrl: PDFJS_ASSETS + 'cmaps/', cMapPacked: true,
+    standardFontDataUrl: PDFJS_ASSETS + 'standard_fonts/',
+  }).promise;
+}
+
 /* ---------- PDF extraction (layout-aware) ----------
    คืนค่า: pages = [ [ [col, col, ...], ...rows ], ...pages ]      */
 async function extractPdf(file, onProgress) {
-  const buf = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pdf = await openPdf(await file.arrayBuffer());
   const pages = [];
   for (let p = 1; p <= pdf.numPages; p++) {
-    const page = await pdf.getPage(p);
-    const tc = await page.getTextContent();
-    const rows = [];
-    for (const it of tc.items) {
-      if (!it.str || !it.str.trim()) continue;
-      const x = it.transform[4], y = it.transform[5];
-      let row = rows.find(r => Math.abs(r.y - y) < 3.5);
-      if (!row) { row = { y, items: [] }; rows.push(row); }
-      row.items.push({ x, w: it.width || 0, str: it.str });
-    }
-    rows.sort((a, b) => b.y - a.y);
-    const pageRows = rows.map(r => {
-      r.items.sort((a, b) => a.x - b.x);
-      const cols = [];
-      let prevEnd = null;
-      for (const it of r.items) {
-        if (prevEnd === null || it.x - prevEnd > 14) {
-          cols.push(it.str);
-        } else {
-          cols[cols.length - 1] += it.str;
-        }
-        prevEnd = Math.max(prevEnd ?? -Infinity, it.x + it.w);
-      }
-      const out = cols.map(c => c.replace(/\s+/g, ' ').trim()).filter(Boolean);
-      // เก็บพิกัดไว้ใช้จัดหน้าเอกสาร Word (เยื้อง/กึ่งกลาง/รวมย่อหน้า)
-      out.x0 = r.items[0]?.x ?? 0;
-      out.x1 = prevEnd ?? 0;
-      return out;
-    }).filter(r => r.length);
-    pageRows.pageW = page.getViewport({ scale: 1 }).width;
-    pages.push(pageRows);
+    pages.push(await pageTextRows(await pdf.getPage(p)));
     onProgress((p / pdf.numPages) * 0.8, `กำลังอ่านหน้า ${p} / ${pdf.numPages}…`);
   }
   return pages;
+}
+
+/* อ่านข้อความที่ฝังอยู่ใน PDF 1 หน้า → แถว/คอลัมน์ตามพิกัด */
+async function pageTextRows(page) {
+  const tc = await page.getTextContent();
+  const rows = [];
+  for (const it of tc.items) {
+    if (!it.str || !it.str.trim()) continue;
+    const x = it.transform[4], y = it.transform[5];
+    let row = rows.find(r => Math.abs(r.y - y) < 3.5);
+    if (!row) { row = { y, items: [] }; rows.push(row); }
+    row.items.push({ x, w: it.width || 0, str: it.str });
+  }
+  rows.sort((a, b) => b.y - a.y);
+  const pageRows = rows.map(r => {
+    r.items.sort((a, b) => a.x - b.x);
+    const cols = [];
+    let prevEnd = null;
+    for (const it of r.items) {
+      if (prevEnd === null || it.x - prevEnd > 14) {
+        cols.push(it.str);
+      } else {
+        cols[cols.length - 1] += it.str;
+      }
+      prevEnd = Math.max(prevEnd ?? -Infinity, it.x + it.w);
+    }
+    const out = cols.map(c => c.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    // เก็บพิกัดไว้ใช้จัดหน้าเอกสาร Word (เยื้อง/กึ่งกลาง/รวมย่อหน้า)
+    out.x0 = r.items[0]?.x ?? 0;
+    out.x1 = prevEnd ?? 0;
+    return out;
+  }).filter(r => r.length);
+  pageRows.pageW = page.getViewport({ scale: 1 }).width;
+  return pageRows;
 }
 
 /* ---------- Smart OCR (Tesseract.js — ไทย + อังกฤษ) ----------
@@ -861,6 +877,7 @@ function setOcrMode(mode) {
   // มือถือไม่มี hover → แสดงคำอธิบายของโหมดที่เลือกไว้ใต้หัวข้อเสมอ
   $('ocrSub').textContent = segBtns.find(b => b.dataset.mode === mode).dataset.tip;
   $('aiKeyRow').classList.toggle('show', mode === 'ai');
+  if (mode === 'ai') refreshAiStatus();
 }
 
 /* ---------- Gemini API key (เก็บใน localStorage ฝั่งผู้ใช้เท่านั้น) ---------- */
@@ -873,22 +890,40 @@ $('aiKeySave').addEventListener('click', () => {
   localStorage.setItem(KEY_STORE, $('aiKeyInput').value.trim());
   $('aiKeySave').textContent = '✅ บันทึกแล้ว';
   setTimeout(() => { $('aiKeySave').textContent = '💾 บันทึก'; }, 1500);
+  refreshAiStatus();
 });
 
 /* ---------- AI OCR ผ่าน Google Gemini ----------
    เรนเดอร์หน้าเป็น JPEG แล้วให้ Gemini ถอดความ + จัดโครงเอกสารเป็น JSON */
-async function renderPageForAi(page) {
+async function renderPageForAi(page, intent = 'print') {
   const base = page.getViewport({ scale: 1 });
   const scale = Math.min(2.5, 1700 / Math.max(base.width, base.height));
   const viewport = page.getViewport({ scale });
   const canvas = document.createElement('canvas');
   canvas.width = Math.floor(viewport.width);
   canvas.height = Math.floor(viewport.height);
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  await page.render({ canvasContext: ctx, viewport, intent: 'print' }).promise;
-  return canvas.toDataURL('image/jpeg', 0.85).split(',')[1]; // base64 ล้วน
+  const task = page.render({ canvasContext: ctx, viewport, intent });
+  if (intent === 'print') { await task.promise; return canvas; }
+  // intent อื่นพึ่ง requestAnimationFrame → ถ้าแท็บถูกซ่อนจะค้าง จึงต้องมีเพดานเวลา
+  const done = await Promise.race([
+    task.promise.then(() => true, () => false),
+    new Promise(r => setTimeout(() => r(false), 4000)),
+  ]);
+  if (!done) { task.cancel(); return null; }
+  return canvas;
+}
+const canvasToJpeg = (canvas, q = 0.85) => canvas.toDataURL('image/jpeg', q).split(',')[1]; // base64 ล้วน
+
+/* นับ "หมึก" บนหน้า — แยก "หน้าว่างจริง" ออกจาก "หน้ามีเนื้อหาแต่ AI ตอบว่าง" */
+const BLANK_INK = 40;
+function canvasInk(canvas) {
+  const d = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  let dark = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] < 540) dark++;
+  return dark;
 }
 
 // gemini-flash-latest = alias ชี้รุ่นล่าสุดเสมอ + สำรอง 2 รุ่น (โควตาฟรีนับแยกรายโมเดล)
@@ -908,71 +943,144 @@ Rules:
 - Merge wrapped lines of the same paragraph or same cell into one string (do not split by visual line).
 - "align" reflects visual alignment; "indent" true when the paragraph has a first-line indent.
 - IGNORE rubber stamps, handwritten signatures, logos, and watermark artifacts entirely.
+- If the page is a form filled in by hand, DO transcribe the handwritten field values (names, dates, numbers, reasons) — only signatures are ignored.
+- Never return an empty "blocks" list when any text on the page is legible.
 - Preserve Thai numerals (๐-๙) and original spelling exactly as printed. Do not translate.`;
 
-/* Redundancy: ใส่ได้หลาย key — ตัวไหนเต็มโควตา/ใช้ไม่ได้ สลับตัวถัดไปอัตโนมัติ */
+/* ---------- แปลงคำตอบ Gemini ให้เหลือ 2 ทรงเสมอ (โค้ดชุดเดียวกับ normalizeBlocks ใน railway/server.js) ----------
+   Gemini (โดยเฉพาะรุ่น lite) ตอบได้สารพัดทรง: ห่อชั้นนอกด้วยชื่ออื่น, ตารางเป็น array เปล่า ๆ,
+   แถวเป็น object, ฟอร์มเป็น {label,value} ฯลฯ — เดิมทรงที่ไม่รู้จักถูก "ทิ้งเงียบ ๆ" จนได้ 0 แถว */
+const aiPara = (t, src) => ({ type: 'paragraph', text: t,
+  align: src && (src.align === 'center' || src.align === 'right') ? src.align : 'left',
+  indent: !!(src && src.indent) });
+const isPrim = (v) => v === null || typeof v !== 'object';
+const isGrid = (a) => Array.isArray(a) && a.length > 0 && a.every(r => Array.isArray(r) && r.every(isPrim));
+const aiCellText = (c) => c == null ? '' :
+  typeof c === 'object' ? String(c.text ?? c.value ?? Object.values(c).filter(isPrim).join(' ')).trim() : String(c).trim();
+function aiTableBlock(rows) {
+  const clean = rows.map(r => r.map(aiCellText)).filter(r => r.some(Boolean));
+  if (!clean.length) return [];
+  const n = Math.max(...clean.map(r => r.length));
+  return [{ type: 'table', rows: clean.map(r => r.concat(Array(n - r.length).fill(''))) }];
+}
+function aiTableRows(x) {
+  let rows = ['rows', 'data', 'body', 'cells', 'table'].map(k => x[k]).find(Array.isArray);
+  if (!rows) return null;
+  let head = ['header', 'headers', 'head', 'columns'].map(k => x[k]).find(Array.isArray);
+  // แถวเป็น object ล้วน ({"ลำดับ":"1","รายการ":"…"}) → ใช้ชื่อคีย์เป็นหัวตาราง
+  if (!head && rows.length && rows.every(r => r && typeof r === 'object' && !Array.isArray(r) && !Array.isArray(r.cells))) {
+    head = Object.keys(rows[0]);
+  }
+  rows = rows.map(r => Array.isArray(r) ? r : r && typeof r === 'object' ? (Array.isArray(r.cells) ? r.cells : Object.values(r)) : [r]);
+  return head && head.length && !Array.isArray(head[0]) ? [head, ...rows] : rows;
+}
+function normalizeAiBlocks(x) {
+  if (x == null || typeof x === 'boolean') return [];
+  if (typeof x !== 'object') { const t = String(x).trim(); return t ? [aiPara(t)] : []; }
+  if (Array.isArray(x)) return isGrid(x) && x.some(r => r.length > 1) ? aiTableBlock(x) : x.flatMap(normalizeAiBlocks);
+  if (Array.isArray(x.blocks)) return normalizeAiBlocks(x.blocks);
+  const type = String(x.type || '').toLowerCase();
+  if (type === 'table') { const rows = aiTableRows(x); if (rows) return aiTableBlock(rows); }
+  for (const k of ['rows', 'data', 'body', 'cells', 'table']) {
+    if (isGrid(x[k])) return aiTableBlock(aiTableRows(x));
+  }
+  if (isPrim(x.text) && x.text != null) { const t = String(x.text).trim(); return t ? [aiPara(t, x)] : []; }
+  if (x.cols !== undefined) {   // สคีมาเก่า
+    const t = (Array.isArray(x.cols) ? x.cols : [x.cols]).map(aiCellText).filter(Boolean).join('\t');
+    return t ? [aiPara(t, x)] : [];
+  }
+  // ห่อชั้นนอกที่ไม่รู้จัก (elements/content/page/…) → มุดลงไปหาเนื้อหา
+  const nested = Object.values(x).filter(v => v && typeof v === 'object');
+  if (nested.length) return nested.flatMap(normalizeAiBlocks);
+  // วัตถุปลายทางที่ไม่รู้จัก เช่น {label,value} → เก็บข้อความไว้ดีกว่าทิ้ง
+  const META = ['type', 'align', 'indent', 'style', 'level', 'id', 'role'];
+  const t = Object.entries(x).filter(([k, v]) => !META.includes(k) && v != null && typeof v !== 'boolean')
+    .map(([, v]) => String(v).trim()).filter(Boolean).join(' ');
+  return t ? [aiPara(t, x)] : [];
+}
+/* คำตอบโดนตัดกลางทาง (MAX_TOKENS) → ถอยไปที่บล็อกสุดท้ายที่ปิดครบ แล้วปิดวงเล็บให้ */
+function parseAiJson(text) {
+  const t = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  if (!t) return null;
+  try { return JSON.parse(t); } catch { /* ลองซ่อมด้านล่าง */ }
+  let i = t.lastIndexOf('}');
+  for (let n = 0; i > 0 && n < 40; n++, i = t.lastIndexOf('}', i - 1)) {
+    for (const tail of [']}', ']', '']) {
+      try { return JSON.parse(t.slice(0, i + 1) + tail); } catch { /* ถอยต่อ */ }
+    }
+  }
+  return null;
+}
+
+let lastAiModel = '';            // โมเดลที่อ่านสำเร็จล่าสุด (โชว์ในผลลัพธ์ จะได้รู้ว่าตกไปรุ่น lite หรือเปล่า)
+const noThinkModels = new Set(); // โมเดลที่ไม่รับ thinkingBudget:0
+async function geminiCall(model, apiKey, b64jpeg) {
+  const gen = { response_mime_type: 'application/json', temperature: 0, maxOutputTokens: 32768 };
+  // ปิด thinking: งาน OCR ไม่ต้องคิดยาว (หน้าตารางแน่น ๆ เคยทำให้คิดวน 3 นาทีจน timeout)
+  if (!noThinkModels.has(model)) gen.thinkingConfig = { thinkingBudget: 0 };
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [
+          { inline_data: { mime_type: 'image/jpeg', data: b64jpeg } },
+          { text: AI_PROMPT },
+        ]}],
+        generationConfig: gen,
+      }),
+    }
+  );
+  if (res.status === 400 && gen.thinkingConfig) {
+    const msg = (await res.clone().json().catch(() => ({}))).error?.message || '';
+    if (/think/i.test(msg)) { noThinkModels.add(model); return geminiCall(model, apiKey, b64jpeg); }
+  }
+  return res;
+}
+
+/* key ส่วนตัว (ใส่ได้หลายตัว): โมเดลเก่งสุดก่อนทุก key แล้วค่อยถอยไปโมเดลสำรอง → คืน blocks ที่จัดทรงแล้ว */
 async function geminiRecognize(b64jpeg, apiKeys) {
   let lastErr = null;
-  for (const apiKey of apiKeys) {
-    for (const model of GEMINI_MODELS) {
+  let emptyModels = 0;
+  const badKeys = new Set();
+  for (const model of GEMINI_MODELS) {
+    for (const apiKey of apiKeys) {
+      if (badKeys.has(apiKey)) continue;
       let res;
       try {
-        res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [
-                { inline_data: { mime_type: 'image/jpeg', data: b64jpeg } },
-                { text: AI_PROMPT },
-              ]}],
-              // ปิด thinking: งาน OCR ไม่ต้องคิดยาว (หน้าตารางแน่น ๆ เคยทำให้คิดวน 3 นาทีจน timeout)
-              generationConfig: { response_mime_type: 'application/json', temperature: 0,
-                maxOutputTokens: 32768, thinkingConfig: { thinkingBudget: 0 } },
-            }),
-          }
-        );
+        res = await geminiCall(model, apiKey, b64jpeg);
       } catch {
-        lastErr = new Error('เชื่อมต่อ Gemini ไม่ได้ — ตรวจสอบอินเทอร์เน็ต');
-        break; // ปัญหาเครือข่าย เปลี่ยน key ก็ไม่ช่วย แต่ลอง key ถัดไปเผื่อไว้
+        throw new Error('เชื่อมต่อ Gemini ไม่ได้ — ตรวจสอบอินเทอร์เน็ต');
       }
-      if (res.status === 404) { lastErr = new Error(`ไม่พบโมเดล ${model}`); continue; }
+      if (res.status === 404) { lastErr = new Error(`ไม่พบโมเดล ${model}`); break; } // โมเดลถัดไป
       if (res.status === 400 || res.status === 403) {
         lastErr = new Error('Gemini API key ไม่ถูกต้องหรือหมดสิทธิ์ — ตรวจสอบ key ที่ aistudio.google.com/apikey');
-        break; // key นี้ใช้ไม่ได้ → สลับ key ถัดไป
+        badKeys.add(apiKey);
+        continue; // key นี้ใช้ไม่ได้ → สลับ key ถัดไป
       }
       if (res.status === 429) {
-        lastErr = new Error('โควตาฟรีเต็มชั่วคราวทุกโมเดล — รอสักครู่แล้วลองใหม่');
-        continue; // โควตานับแยกรายโมเดล → ลองโมเดลถัดไปก่อน แล้วค่อยสลับ key
+        lastErr = new Error('โควตาฟรีของ key ส่วนตัวเต็มทุกโมเดล — รอสักครู่แล้วลองใหม่ (โควตารายวันรีเซ็ตราว 14:00–15:00 น.)');
+        lastErr.quota = true;
+        continue; // โควตานับแยกราย key × โมเดล → key ถัดไป แล้วค่อยโมเดลถัดไป
       }
       if (!res.ok) { lastErr = new Error(`Gemini ตอบกลับผิดพลาด (HTTP ${res.status})`); continue; }
       const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-      try {
-        return JSON.parse(text.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
-      } catch {
-        lastErr = new Error('อ่านผลลัพธ์จาก Gemini ไม่ได้ — ลองอีกครั้ง');
-        continue;
-      }
+      const json = parseAiJson(text);
+      if (json === null) { lastErr = new Error('อ่านผลลัพธ์จาก Gemini ไม่ได้ — ลองอีกครั้ง'); break; } // โมเดลเดิมก็ตอบเหมือนเดิม
+      const blocks = normalizeAiBlocks(json);
+      if (blocks.length) { lastAiModel = model; return blocks; }
+      if (++emptyModels >= 2) return [];  // สองโมเดลยืนยันตรงกันว่าไม่มีข้อความ
+      break;                              // ตอบว่าง → ให้โมเดลอื่นลองอ่าน
     }
   }
+  if (emptyModels) return [];
   throw lastErr || new Error('เรียก Gemini ไม่สำเร็จ');
 }
 
-/* Gemini ตอบได้หลายทรง: {"blocks":[...]} / [...] / [{"blocks":[...]},...] → แผ่ให้แบนเสมอ */
-function flattenAiBlocks(x) {
-  if (Array.isArray(x)) return x.flatMap(flattenAiBlocks);
-  if (x && typeof x === 'object') {
-    if (x.blocks) return flattenAiBlocks(x.blocks);
-    if (x.type === 'table' && Array.isArray(x.rows)) return [x];   // ตารางทั้งก้อน
-    if (x.type === 'paragraph' || x.text !== undefined) return [x]; // ย่อหน้า (สคีมาใหม่)
-    if (x.cols !== undefined) return [x];                           // สคีมาเก่า (สำรอง)
-  }
-  return [];
-}
-
-/* ไม่มี key ส่วนตัว → ใช้เซิร์ฟเวอร์กลาง (key อยู่ฝั่งเซิร์ฟเวอร์ ไม่โผล่ในหน้าเว็บ) */
+/* ไม่มี key ส่วนตัว → ใช้เซิร์ฟเวอร์กลาง (key อยู่ฝั่งเซิร์ฟเวอร์ ไม่โผล่ในหน้าเว็บ) → คืน blocks ที่จัดทรงแล้ว */
+const fmtClock = (ms) => new Date(ms).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 async function proxyRecognize(b64jpeg) {
   let res;
   try {
@@ -984,47 +1092,111 @@ async function proxyRecognize(b64jpeg) {
   } catch {
     throw new Error('เชื่อมต่อเซิร์ฟเวอร์ AI ไม่ได้ — ตรวจสอบอินเทอร์เน็ต หรือใส่ Gemini key ส่วนตัวแทน');
   }
-  if (res.status === 429) throw new Error('โควตากลางเต็มชั่วคราว — รอสักครู่ หรือใส่ Gemini key ส่วนตัว (ฟรีที่ aistudio.google.com/apikey)');
+  const j = await res.json().catch(() => ({}));
+  if (res.status === 429) {
+    const err = new Error(
+      j.scope === 'day' ? `โควตา AI ฟรีของวันนี้หมดแล้ว — รีเซ็ตราว ${fmtClock(j.resetAt)} น. หรือใส่ Gemini key ส่วนตัว (ฟรีที่ aistudio.google.com/apikey) เพื่อใช้ต่อได้ทันที`
+      : j.scope === 'ip' ? 'เครื่องนี้ส่งคำขอถี่เกินไป — รอประมาณ 10 นาทีแล้วลองใหม่'
+      : 'โควตากลางเต็มชั่วคราว — รอสัก 1 นาทีแล้วลองใหม่ หรือใส่ Gemini key ส่วนตัว (ฟรีที่ aistudio.google.com/apikey)');
+    err.quota = true;
+    throw err;
+  }
   if (!res.ok) throw new Error(`เซิร์ฟเวอร์ AI ขัดข้อง (HTTP ${res.status}) — ลองใหม่ หรือใส่ key ส่วนตัว`);
-  return await res.json();
+  if (j.meta?.model) lastAiModel = j.meta.model;
+  return normalizeAiBlocks(j.blocks ?? []);
 }
 
+/* สถานะโควตาเซิร์ฟเวอร์กลาง — โชว์ใต้ช่อง key จะได้รู้เลยว่า API หมดหรือยัง */
+async function refreshAiStatus() {
+  const el = $('aiStatus');
+  if (getAiKeys().length) { el.textContent = '🔑 ใช้ key ส่วนตัวของคุณ (ไม่ผ่านเซิร์ฟเวอร์กลาง)'; return; }
+  try {
+    const res = await fetch(`${AI_PROXY}/api/health`, { cache: 'no-store' });
+    if (!res.ok) { el.textContent = ''; return; }   // เซิร์ฟเวอร์รุ่นเก่ายังไม่มี endpoint นี้
+    const h = await res.json();
+    el.textContent =
+      h.status === 'ok' ? `🟢 เซิร์ฟเวอร์กลางพร้อมใช้ — โควตา AI ยังเหลือ (${h.usable}/${h.total} ช่อง)`
+      : h.status === 'degraded' ? `🟡 โควตา AI เต็มไปบางส่วน แต่ยังใช้ได้ (${h.usable}/${h.total} ช่อง) — รีเซ็ตราว ${fmtClock(h.resetAt)} น.`
+      : h.status === 'exhausted' ? `🔴 โควตา AI ฟรีของวันนี้หมดแล้ว — รีเซ็ตราว ${fmtClock(h.resetAt)} น. หรือใส่ key ส่วนตัวเพื่อใช้ต่อได้ทันที`
+      : '⚪ เซิร์ฟเวอร์กลางยังไม่ได้ตั้งค่า key';
+  } catch { el.textContent = ''; }   // ออฟไลน์/เซิร์ฟเวอร์ล่ม: ตอนกดแปลงจะแจ้งเอง
+}
+
+/* blocks ที่จัดทรงแล้ว → แถวข้อมูลของหน้า (ตารางแตกเป็นแถวเซลล์ ติดป้าย inTable ไว้ประกอบร่างตอนสร้าง Word) */
+function aiBlocksToRows(blocks, p) {
+  const rows = blocks.flatMap((b, bi) => {
+    if (b.type === 'table') {
+      const key = `p${p}_t${bi}`;
+      return b.rows.map(r => { const cells = [...r]; cells.inTable = key; return cells; });
+    }
+    const cols = b.text.split('\t').map(c => c.trim()).filter(Boolean); // \t = สคีมาเก่าแบบหลายคอลัมน์
+    cols.align = b.align;
+    cols.indent = b.indent;
+    return [cols];
+  });
+  rows.aiLayout = true;
+  return rows;
+}
+
+let aiNotes = [];   // เรื่องที่ผู้ใช้ควรรู้หลังแปลงเสร็จ เช่น หน้าไหนต้องใช้แผนสำรอง
+let aiSawInk = false; // มีหน้าไหนที่ "มีเนื้อหาให้อ่าน" บ้างไหม (ใช้เลือกข้อความแจ้งเตือนตอนได้ 0 แถว)
 async function extractPdfAi(file, onProgress) {
   const apiKeys = getAiKeys(); // มี key ส่วนตัว = เรียก Gemini ตรง, ไม่มี = ผ่านเซิร์ฟเวอร์กลาง
-  const buf = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const recognize = (canvas, q) => apiKeys.length
+    ? geminiRecognize(canvasToJpeg(canvas, q), apiKeys)
+    : proxyRecognize(canvasToJpeg(canvas, q));
+  const pdf = await openPdf(await file.arrayBuffer());
   const pages = [];
+  const viaText = [], viaOcr = [];
+  let aiDown = null;  // AI ล่ม/โควตาหมดกลางเอกสาร → หน้าที่เหลือใช้แผนสำรอง ไม่ทิ้งหน้าที่อ่านมาแล้ว
+  aiNotes = [];
+  aiSawInk = false;
+  lastAiModel = '';
   for (let p = 1; p <= pdf.numPages; p++) {
-    onProgress(0.05 + ((p - 1) / pdf.numPages) * 0.85,
-      `✨ AI OCR หน้า ${p} / ${pdf.numPages} — Gemini กำลังอ่าน…`);
+    const say = (msg) => onProgress(0.05 + ((p - 1) / pdf.numPages) * 0.85,
+      `✨ AI OCR หน้า ${p} / ${pdf.numPages} — ${msg}`);
+    say('Gemini กำลังอ่าน…');
     const page = await pdf.getPage(p);
-    const b64 = await renderPageForAi(page);
-    const result = apiKeys.length
-      ? await geminiRecognize(b64, apiKeys)
-      : await proxyRecognize(b64);
-    const rows = flattenAiBlocks(result).flatMap((b, bi) => {
-      // ตาราง: แตกเป็นแถวเซลล์ ติดป้าย inTable เดียวกันไว้ประกอบร่างตอนสร้าง Word
-      if (b.type === 'table' && Array.isArray(b.rows)) {
-        const key = `p${p}_t${bi}`;
-        return b.rows.map(r => {
-          const cells = (Array.isArray(r) ? r : [r]).map(c => String(c ?? '').trim());
-          if (!cells.some(Boolean)) return null;
-          cells.inTable = key;
-          return cells;
-        }).filter(Boolean);
+    let canvas = await renderPageForAi(page);
+    let ink = canvasInk(canvas);
+    if (ink < BLANK_INK) {
+      // บางไฟล์ซ่อนเนื้อหาไว้ตอน "พิมพ์" → เรนเดอร์แบบแสดงผลบนจออีกรอบก่อนสรุปว่าเป็นหน้าว่าง
+      const shown = await renderPageForAi(page, 'display');
+      if (shown) { canvas = shown; ink = canvasInk(canvas); }
+    }
+    const hasInk = ink >= BLANK_INK;   // หน้าว่างจริง = ไม่ต้องเปลืองโควตา AI
+    if (hasInk) aiSawInk = true;
+    let rows = [];
+    if (hasInk && !aiDown) {
+      try {
+        rows = aiBlocksToRows(await recognize(canvas), p);
+        if (!rows.length) {
+          // หน้ามีหมึกแต่ AI ตอบว่าง → ส่งภาพขาวดำเร่งคอนทราสต์ ความละเอียดสูงขึ้น ให้อ่านซ้ำอีก 1 รอบ
+          say('AI ยังอ่านไม่ออก — ส่งภาพคมชัดขึ้นให้อ่านซ้ำ…');
+          rows = aiBlocksToRows(await recognize(await renderPageForOcr(page), 0.92), p);
+        }
+      } catch (err) {
+        if (!pages.some(r => r.aiLayout && r.length)) throw err;  // ยังไม่มีหน้าไหนสำเร็จ → แจ้งสาเหตุตรง ๆ
+        aiDown = err.message;
       }
-      // ย่อหน้า (สคีมาใหม่ใช้ text, สคีมาเก่าใช้ cols)
-      const cols = (b.text !== undefined ? [String(b.text)] :
-        (Array.isArray(b.cols) ? b.cols : [String(b.cols || '')]))
-        .map(c => String(c).trim()).filter(Boolean);
-      if (!cols.length) return [];
-      cols.align = b.align === 'center' || b.align === 'right' ? b.align : 'left';
-      cols.indent = !!b.indent;
-      return [cols];
-    });
-    rows.aiLayout = true;
+    }
+    if (!rows.length) {
+      // แผนสำรอง: ข้อความที่ฝังใน PDF → ไม่มีค่อย OCR ในเครื่อง (ดีกว่าจบด้วย error ทั้งไฟล์)
+      rows = await pageTextRows(page);
+      if (rows.length) {
+        viaText.push(p);
+      } else if (hasInk) {
+        say('ใช้ OCR ในเครื่องอ่านแทน…');
+        rows = await ocrPageRows(page, 'clean', null, say);
+        if (!rows.length) rows = await ocrPageRows(page, 'full', null, say);
+        if (rows.length) viaOcr.push(p);
+      }
+    }
     pages.push(rows);
   }
+  if (viaText.length) aiNotes.push(`หน้า ${viaText.join(', ')} ใช้ข้อความที่ฝังใน PDF แทน`);
+  if (viaOcr.length) aiNotes.push(`หน้า ${viaOcr.join(', ')} ใช้ OCR ในเครื่องแทน`);
+  if (aiNotes.length) aiNotes.push(aiDown ? `เพราะ ${aiDown}` : 'เพราะ AI อ่านหน้านั้นไม่ออก');
   return pages;
 }
 $('ocrSeg').addEventListener('click', (e) => {
@@ -1181,24 +1353,28 @@ function ocrWordsToRows(words, filterLevel = 'clean') {
   }).filter(r => r && r.length);
 }
 
+/* OCR ในเครื่อง 1 หน้า (Tesseract) → แถว/คอลัมน์ — ใช้ทั้งโหมด OCR ปกติ และเป็นแผนสำรองของโหมด AI */
+async function ocrPageRows(page, filterLevel, onPageProgress, onStatus) {
+  const worker = await getOcrWorker(onStatus);
+  const canvas = await renderPageForOcr(page);
+  ocrPageProgress = onPageProgress;
+  const { data } = await worker.recognize(canvas);
+  ocrPageProgress = null;
+  const pageRows = ocrWordsToRows(data.words || [], filterLevel);
+  pageRows.pageW = canvas.width;
+  canvas.width = canvas.height = 0;
+  return pageRows;
+}
+
 async function extractPdfOcr(file, onProgress, filterLevel = 'clean') {
-  const buf = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-  const worker = await getOcrWorker((msg) => onProgress(0.03, msg));
+  const pdf = await openPdf(await file.arrayBuffer());
   const pages = [];
   for (let p = 1; p <= pdf.numPages; p++) {
     const frac = (done) => 0.05 + ((p - 1 + done) / pdf.numPages) * 0.82;
     onProgress(frac(0), `🧠 OCR หน้า ${p} / ${pdf.numPages} — กำลังเตรียมภาพ…`);
-    const page = await pdf.getPage(p);
-    const canvas = await renderPageForOcr(page);
-    ocrPageProgress = (pr) =>
-      onProgress(frac(pr), `🧠 OCR หน้า ${p} / ${pdf.numPages} — อ่านตัวอักษร ${Math.round(pr * 100)}%`);
-    const { data } = await worker.recognize(canvas);
-    ocrPageProgress = null;
-    const pageRows = ocrWordsToRows(data.words || [], filterLevel);
-    pageRows.pageW = canvas.width;
-    pages.push(pageRows);
-    canvas.width = canvas.height = 0;
+    pages.push(await ocrPageRows(await pdf.getPage(p), filterLevel,
+      (pr) => onProgress(frac(pr), `🧠 OCR หน้า ${p} / ${pdf.numPages} — อ่านตัวอักษร ${Math.round(pr * 100)}%`),
+      (msg) => onProgress(0.03, msg)));
   }
   return pages;
 }
@@ -1420,7 +1596,10 @@ $('convertBtn').addEventListener('click', async () => {
     }
     const totalRows = pages.reduce((s, p) => s + p.length, 0);
     if (totalRows === 0) {
-      throw new Error('OCR อ่านตัวอักษรจากไฟล์นี้ไม่ได้เลย — ภาพอาจเบลอ ความละเอียดต่ำ หรือไฟล์ถูกป้องกันไว้');
+      throw new Error(ocrMode !== 'ai'
+        ? 'OCR อ่านตัวอักษรจากไฟล์นี้ไม่ได้เลย — ภาพอาจเบลอ ความละเอียดต่ำ หรือไฟล์ถูกป้องกันไว้'
+        : !aiSawInk ? 'ไฟล์นี้เป็นหน้าว่างทุกหน้า — เรนเดอร์ออกมาแล้วไม่มีเนื้อหาให้อ่านเลย ลองเปิดไฟล์ตรวจดูอีกครั้ง'
+        : 'ไม่พบข้อความในไฟล์นี้เลย — ลองครบแล้วทั้ง AI (Gemini) และ OCR ในเครื่อง ไฟล์อาจเป็นภาพล้วน หรือสแกนมาจางมาก ลองสแกนใหม่ให้เข้มขึ้น');
     }
     showProgress(0.9, 'กำลังสร้างไฟล์ปลายทาง…');
 
@@ -1438,7 +1617,9 @@ $('convertBtn').addEventListener('click', async () => {
       $('progressWrap').classList.remove('show');
       $('resultMeta').textContent =
         `${outputName} • ${formatSize(outputBlob.size)} • ${pages.length} หน้า / ${totalRows} แถวข้อมูล` +
-        (lastUsedOcr === 'ai' ? ' • ✨ อ่านด้วย AI OCR (Gemini)'
+        (lastUsedOcr === 'ai'
+          ? (pages.some(r => r.aiLayout && r.length) ? ` • ✨ อ่านด้วย AI OCR (${lastAiModel || 'Gemini'})` : '') +
+            (aiNotes.length ? ` • ⚠️ ${aiNotes.join(' ')}` : '')
           : lastUsedOcr ? ' • 🧠 อ่านด้วย Smart OCR' : '');
       $('result').classList.add('show');
     }, 450);
@@ -1448,6 +1629,7 @@ $('convertBtn').addEventListener('click', async () => {
     showError('❌ ' + (err.message || 'เกิดข้อผิดพลาดระหว่างแปลงไฟล์'));
   } finally {
     btn.disabled = !(currentFile && selectedFormat);
+    if (ocrMode === 'ai') refreshAiStatus();
   }
 });
 
