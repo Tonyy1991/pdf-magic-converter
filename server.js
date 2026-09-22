@@ -263,6 +263,24 @@ async function ocr(b64) {
   throw err;
 }
 
+/* ตรวจว่า key แต่ละตัว "ยังใช้ได้ไหม" โดยไม่เปลืองโควตา generate: เรียก models.list (ไม่นับ RPD)
+   แคชผล 10 นาที — key ไม่ต้องหลุดออกจากเซิร์ฟเวอร์ไปตรวจที่ไหน */
+let keyProbe = { at: 0, keys: [] };
+async function probeKeys() {
+  if (KEYS.length && Date.now() - keyProbe.at < 10 * 60000) return keyProbe.keys;
+  const keys = await Promise.all(KEYS.map(async (key, ki) => {
+    try {
+      const res = await fetch(`${API}?pageSize=1&key=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(15000) });
+      if (res.ok) return { key: ki + 1, valid: true };
+      const e = (await res.json().catch(() => ({}))).error || {};
+      const reason = [...(e.details || [])].map(d => d.reason).find(Boolean) || e.status || String(e.message || '').slice(0, 80);
+      return { key: ki + 1, valid: false, status: res.status, reason };
+    } catch { return { key: ki + 1, valid: null, reason: 'network' }; } // ตรวจไม่ได้ ≠ key เสีย
+  }));
+  keyProbe = { at: Date.now(), keys };
+  return keys;
+}
+
 /* สถานะโควตาแบบไม่เปลืองโควตา: สรุปจากการเรียกจริงที่ผ่านมา (ไม่เปิดเผย key) */
 function health() {
   const now = Date.now();
@@ -298,7 +316,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && (req.url || '').split('?')[0] === '/api/health') {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'no-store');
-    res.end(JSON.stringify(health()));
+    // ?probe=1 → แถมผลตรวจ key (models.list, แคช 10 นาที) ให้หน้าเว็บบอกได้ว่าต้องเปลี่ยน key ไหม
+    const withProbe = /[?&]probe=1/.test(req.url || '');
+    const keyCheck = withProbe ? await probeKeys() : undefined;
+    res.end(JSON.stringify({ ...health(), keyCheck }));
     return;
   }
 
@@ -341,4 +362,4 @@ const server = http.createServer(async (req, res) => {
 if (require.main === module) {
   server.listen(PORT, () => console.log(`up on ${PORT}, keys: ${KEYS.length}`));
 }
-module.exports = { normalizeBlocks, parseAiJson, ocr, health, combos };
+module.exports = { normalizeBlocks, parseAiJson, ocr, health, probeKeys, combos };

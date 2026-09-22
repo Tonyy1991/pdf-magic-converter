@@ -1128,14 +1128,27 @@ async function refreshAiStatus() {
   const el = $('aiStatus');
   if (getAiKeys().length) { el.textContent = '🔑 ใช้ key ส่วนตัวของคุณ (ไม่ผ่านเซิร์ฟเวอร์กลาง)'; return; }
   try {
-    const res = await fetch(`${AI_PROXY}/api/health`, { cache: 'no-store' });
+    const res = await fetch(`${AI_PROXY}/api/health?probe=1`, { cache: 'no-store' });
     if (!res.ok) { el.textContent = ''; return; }   // เซิร์ฟเวอร์รุ่นเก่ายังไม่มี endpoint นี้
     const h = await res.json();
+    // key เสีย (ตรวจด้วย models.list ฝั่งเซิร์ฟเวอร์ หรือ Gemini ปฏิเสธตอนใช้จริง) → บอกเลยว่าต้องเปลี่ยน key ไหน
+    const badKeys = [...new Set([
+      ...(h.keyCheck || []).filter(k => k.valid === false).map(k => k.key),
+      ...(h.combos || []).filter(c => c.state === 'bad-key').map(c => c.key),
+    ])].sort();
+    if (badKeys.length) {
+      const why = (h.keyCheck || []).find(k => k.valid === false)?.reason;
+      el.textContent = `🔴 Gemini key ตัวที่ ${badKeys.join(', ')} ใช้ไม่ได้แล้ว${why ? ` (${why})` : ''} — ต้องเปลี่ยน key ใหม่ในตัวแปร GEMINI_KEYS บน Railway` +
+        (badKeys.length < h.keys ? ` (ตอนนี้เหลือใช้ได้ ${h.keys - badKeys.length} ตัว)` : '');
+      return;
+    }
     const over = h.overloaded || 0;                  // ช่องที่ Google ล้นชั่วคราว (ฟื้นเองใน 2 นาที)
     const quotaDead = h.total - h.usable - over;     // ช่องที่ตายเพราะโควตา/key จริง ๆ
     const waitMin = Math.max(1, Math.ceil((h.overloadedRetryInSec || 120) / 60));
+    const keysOk = (h.keyCheck || []).filter(k => k.valid === true).length;
     el.textContent =
-      h.status === 'ok' ? `🟢 เซิร์ฟเวอร์กลางพร้อมใช้ — โควตา AI ยังเหลือ (${h.usable}/${h.total} ช่อง)`
+      h.status === 'ok' ? `🟢 เซิร์ฟเวอร์กลางพร้อมใช้ — โควตา AI ยังเหลือ (${h.usable}/${h.total} ช่อง)` +
+          (keysOk ? ` • 🔑 key ใช้ได้ ${keysOk}/${h.keys} ตัว` : '')
       : h.status === 'overloaded' ? `🟠 Gemini ล้นชั่วคราวทุกโมเดล (ฝั่ง Google ไม่ใช่โควตาหมด) — ลองใหม่ในอีกราว ${waitMin} นาที`
       : h.status === 'degraded' && !quotaDead ? `🟡 Gemini บางโมเดลล้นชั่วคราว ระบบข้ามไปใช้โมเดลอื่นให้เอง (${h.usable}/${h.total} ช่อง) — ใช้ได้ตามปกติ`
       : h.status === 'degraded' ? `🟡 โควตา AI เต็มไปบางส่วน แต่ยังใช้ได้ (${h.usable}/${h.total} ช่อง) — รีเซ็ตราว ${fmtClock(h.resetAt)} น.`
