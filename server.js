@@ -10,6 +10,7 @@ const MODELS = ['gemini-flash-latest', 'gemini-3.5-flash', 'gemini-3.1-flash-lit
 const API = 'https://generativelanguage.googleapis.com/v1beta/models';
 const CALL_TIMEOUT_MS = 90000;   // เพดานต่อการเรียก Gemini 1 ครั้ง
 const WAIT_BUDGET_MS = 100000;   // รอโควตารายนาทีฟื้นได้นานสุดเท่านี้ต่อ 1 คำขอ
+const OVERLOAD_SKIP_MS = 120000; // โมเดลตอบ 503 (ล้นฝั่ง Google) → ข้ามโมเดลนั้น "ทุก key" นานเท่านี้
 const ALLOW_ORIGINS = [
   'https://tonyy1991.github.io',
   'https://pdf-magic-converter-production.up.railway.app',
@@ -115,7 +116,7 @@ function parseAiJson(text) {
    เรียงแบบ "โมเดลเก่งสุดก่อน ทุก key" แล้วค่อยถอยไปโมเดลสำรอง (เดิมไล่ทีละ key ทำให้ตกไป lite เร็วเกิน) */
 const combos = [];
 MODELS.forEach(model => KEYS.forEach((key, ki) => combos.push({
-  key, ki, model, deadUntil: 0, why: '', ok: 0, empty: 0, r429: 0, streak429: 0, err: 0, lastStatus: 0, lastAt: 0,
+  key, ki, model, deadUntil: 0, why: '', ok: 0, empty: 0, r429: 0, streak429: 0, r503: 0, err: 0, lastStatus: 0, lastAt: 0,
 })));
 const noThinkCfg = new Set();   // โมเดลที่ไม่รับ thinkingBudget:0 → เรียกแบบไม่ส่ง thinkingConfig
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -129,7 +130,8 @@ function nextPacificMidnight() {   // โควตารายวันของ
 }
 function kill(list, ms, why) {
   const until = Date.now() + ms;
-  for (const c of list) { c.deadUntil = until; c.why = why; }
+  // ต่อเวลาพักได้อย่างเดียว ไม่ย่นให้สั้นลง (เช่น key ที่หมดโควตารายวันอยู่ ไม่ควรถูก 503 ของ key อื่นมาปลุกก่อนเวลา)
+  for (const c of list) if (until > c.deadUntil) { c.deadUntil = until; c.why = why; }
 }
 
 /* เรียก Gemini 1 ครั้ง → คืน {kind:'ok'|'empty'|'rpd'|'rpm'|'bad-key'|'no-model'|'bad-request'|'upstream'|'blocked'|'parse'} */
@@ -173,6 +175,13 @@ async function callGemini(c, b64) {
       kill([c], Math.min(65000, Math.max(5000, (parseFloat(retry) || 20) * 1000)), 'rpm');
       return { kind: 'rpm', status: 429 };
     }
+    // 503 / UNAVAILABLE = Google บอกว่าโมเดลนี้ล้น — เป็นทั้งโมเดล ไม่ใช่ราย key → ข้ามโมเดลนี้ทุก key 2 นาที
+    // (เดิมพักแค่ key×โมเดลนั้น 15 วิ ทำให้เอกสารหลายหน้าเสียเวลารอ 503 ซ้ำทุกหน้า หน้าละ ~18 วิ)
+    if (res.status === 503 || e.status === 'UNAVAILABLE' || /overloaded/i.test(msg)) {
+      c.r503++;
+      kill(combos.filter(x => x.model === c.model), OVERLOAD_SKIP_MS, 'overloaded');
+      return { kind: 'overloaded', status: res.status };
+    }
     c.err++;
     if (res.status === 404) { kill(combos.filter(x => x.model === c.model), 6 * 3600000, 'no-model'); return { kind: 'no-model', status: 404 }; }
     if (res.status === 400 && sentThink && /think/i.test(msg)) {
@@ -183,7 +192,7 @@ async function callGemini(c, b64) {
       details.some(d => /API_KEY|PERMISSION|SERVICE_DISABLED|CONSUMER/i.test(String(d.reason || '')));
     if (keyProblem) { kill(combos.filter(x => x.ki === c.ki), 6 * 3600000, 'bad-key'); return { kind: 'bad-key', status: res.status }; }
     if (res.status === 400) { kill([c], 10 * 60000, 'bad-request'); return { kind: 'bad-request', status: 400, msg: msg.slice(0, 160) }; }
-    kill([c], 15000, 'upstream');     // 5xx / overloaded
+    kill([c], 15000, 'upstream');     // 5xx อื่น ๆ (500 internal ฯลฯ) พักเฉพาะ key×โมเดลนี้สั้น ๆ
     return { kind: 'upstream', status: res.status };
   }
 
@@ -236,14 +245,18 @@ async function ocr(b64) {
   }
 
   if (emptyModels.size) return { blocks: [], meta: meta({ empty: true }) };
+  // ไม่มีตัวไหนอ่านได้ → บอกสาเหตุที่ "ฟื้นเร็วสุด" ก่อน ผู้ใช้จะได้รู้ว่าต้องรอครู่เดียว ไม่ใช่รอรีเซ็ตรายวัน
   const now = Date.now();
-  const quota = combos.filter(c => c.deadUntil > now && (c.why === 'rpd' || c.why === 'rpm'));
-  const err = new Error(quota.length ? 'quota' : 'upstream');
-  err.status = quota.length ? 429 : 502;
+  const dead = (w) => combos.filter(c => c.deadUntil > now && c.why === w);
+  const rpm = dead('rpm'), over = dead('overloaded').concat(dead('upstream')), rpd = dead('rpd');
+  const err = new Error(rpm.length ? 'quota' : over.length ? 'overloaded' : rpd.length ? 'quota' : 'upstream');
+  err.status = err.message === 'quota' ? 429 : err.message === 'overloaded' ? 503 : 502;
   err.payload = {
     error: err.message,
-    // day = โควตารายวันหมดทุกตัว (รอรีเซ็ต), minute = แค่ถี่เกินไป รอไม่กี่วินาที
-    scope: quota.length && quota.every(c => c.why === 'rpd') ? 'day' : 'minute',
+    // day = โควตารายวันหมด (รอรีเซ็ต), minute = แค่ถี่เกินไป รอไม่กี่วินาที
+    scope: rpm.length ? 'minute' : 'day',
+    // overloaded: อีกกี่วินาทีโมเดลแรกจะถูกลองใหม่
+    retryInSec: over.length ? Math.ceil((Math.min(...over.map(c => c.deadUntil)) - now) / 1000) : 0,
     resetAt: nextPacificMidnight(),
     meta: meta({}),
   };
@@ -258,12 +271,17 @@ function health() {
     state: c.deadUntil > now ? c.why : (c.lastAt ? 'ok' : 'unknown'),
     retryInSec: c.deadUntil > now ? Math.ceil((c.deadUntil - now) / 1000) : 0,
     lastStatus: c.lastStatus, lastAgoSec: c.lastAt ? Math.round((now - c.lastAt) / 1000) : null,
-    ok: c.ok, empty: c.empty, r429: c.r429, err: c.err,
+    ok: c.ok, empty: c.empty, r429: c.r429, r503: c.r503, err: c.err,
   }));
-  const usable = list.filter(c => c.state === 'ok' || c.state === 'unknown' || c.state === 'rpm' || c.state === 'upstream');
+  const usable = list.filter(c => ['ok', 'unknown', 'rpm', 'upstream'].includes(c.state));
+  const overloaded = list.filter(c => c.state === 'overloaded');
   return {
-    status: !KEYS.length ? 'no_keys' : !usable.length ? 'exhausted' : usable.length < list.length ? 'degraded' : 'ok',
+    // overloaded = Google ล้นทุกโมเดล (ฟื้นเองใน 2 นาที ไม่ใช่โควตาหมด) — แยกจาก exhausted ให้หน้าเว็บบอกผู้ใช้ถูก
+    status: !KEYS.length ? 'no_keys' : usable.length ? (usable.length < list.length ? 'degraded' : 'ok')
+      : overloaded.length ? 'overloaded' : 'exhausted',
     keys: KEYS.length, models: MODELS, usable: usable.length, total: list.length,
+    overloaded: overloaded.length,
+    overloadedRetryInSec: overloaded.length ? Math.min(...overloaded.map(c => c.retryInSec)) : 0,
     resetAt: nextPacificMidnight(), uptimeMin: Math.round(process.uptime() / 60), combos: list,
   };
 }
@@ -301,7 +319,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify(result));
       } catch (e) {
         console.log(JSON.stringify({ at: new Date().toISOString(), result: e.message, ...(e.payload?.meta || {}) }));
-        res.statusCode = e.status === 429 ? 429 : 502;
+        res.statusCode = e.status === 429 || e.status === 503 ? e.status : 502;
         res.end(JSON.stringify(e.payload || { error: e.message || 'ocr_failed' }));
       }
     });

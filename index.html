@@ -1039,12 +1039,19 @@ async function geminiCall(model, apiKey, b64jpeg) {
   return res;
 }
 
+/* 503 = Google บอกว่าโมเดลนี้ล้น — เป็นทั้งโมเดล ไม่ใช่ราย key → ข้ามโมเดลนั้น 2 นาที (เอกสารหลายหน้าจะได้ไม่รอ 503 ซ้ำทุกหน้า) */
+const OVERLOAD_SKIP_MS = 120000;
+const modelOverloadedUntil = new Map();
+const overloadedErr = () => Object.assign(
+  new Error('Gemini ล้นชั่วคราวทุกโมเดล (ฝั่ง Google — โควตายังไม่หมด) — รอราว 2 นาทีแล้วลองใหม่'), { transient: true });
+
 /* key ส่วนตัว (ใส่ได้หลายตัว): โมเดลเก่งสุดก่อนทุก key แล้วค่อยถอยไปโมเดลสำรอง → คืน blocks ที่จัดทรงแล้ว */
 async function geminiRecognize(b64jpeg, apiKeys) {
   let lastErr = null;
   let emptyModels = 0;
   const badKeys = new Set();
   for (const model of GEMINI_MODELS) {
+    if ((modelOverloadedUntil.get(model) || 0) > Date.now()) { lastErr = lastErr || overloadedErr(); continue; }
     for (const apiKey of apiKeys) {
       if (badKeys.has(apiKey)) continue;
       let res;
@@ -1054,6 +1061,11 @@ async function geminiRecognize(b64jpeg, apiKeys) {
         throw new Error('เชื่อมต่อ Gemini ไม่ได้ — ตรวจสอบอินเทอร์เน็ต');
       }
       if (res.status === 404) { lastErr = new Error(`ไม่พบโมเดล ${model}`); break; } // โมเดลถัดไป
+      if (res.status === 503) {
+        modelOverloadedUntil.set(model, Date.now() + OVERLOAD_SKIP_MS);
+        lastErr = overloadedErr();
+        break; // โมเดลถัดไปเลย — key อื่นก็เจอโมเดลล้นเหมือนกัน
+      }
       if (res.status === 400 || res.status === 403) {
         lastErr = new Error('Gemini API key ไม่ถูกต้องหรือหมดสิทธิ์ — ตรวจสอบ key ที่ aistudio.google.com/apikey');
         badKeys.add(apiKey);
@@ -1101,6 +1113,11 @@ async function proxyRecognize(b64jpeg) {
     err.quota = true;
     throw err;
   }
+  if (res.status === 503 && j.error === 'overloaded') {
+    // Google ล้นทุกโมเดล (เซิร์ฟเวอร์กลางลองครบแล้ว) — ไม่ใช่โควตาหมด แค่รอสักครู่
+    const min = Math.max(1, Math.ceil((j.retryInSec || 120) / 60));
+    throw Object.assign(new Error(`Gemini ล้นชั่วคราวทุกโมเดล (ฝั่ง Google — โควตายังไม่หมด) — รออีกราว ${min} นาทีแล้วลองใหม่`), { transient: true });
+  }
   if (!res.ok) throw new Error(`เซิร์ฟเวอร์ AI ขัดข้อง (HTTP ${res.status}) — ลองใหม่ หรือใส่ key ส่วนตัว`);
   if (j.meta?.model) lastAiModel = j.meta.model;
   return normalizeAiBlocks(j.blocks ?? []);
@@ -1114,8 +1131,13 @@ async function refreshAiStatus() {
     const res = await fetch(`${AI_PROXY}/api/health`, { cache: 'no-store' });
     if (!res.ok) { el.textContent = ''; return; }   // เซิร์ฟเวอร์รุ่นเก่ายังไม่มี endpoint นี้
     const h = await res.json();
+    const over = h.overloaded || 0;                  // ช่องที่ Google ล้นชั่วคราว (ฟื้นเองใน 2 นาที)
+    const quotaDead = h.total - h.usable - over;     // ช่องที่ตายเพราะโควตา/key จริง ๆ
+    const waitMin = Math.max(1, Math.ceil((h.overloadedRetryInSec || 120) / 60));
     el.textContent =
       h.status === 'ok' ? `🟢 เซิร์ฟเวอร์กลางพร้อมใช้ — โควตา AI ยังเหลือ (${h.usable}/${h.total} ช่อง)`
+      : h.status === 'overloaded' ? `🟠 Gemini ล้นชั่วคราวทุกโมเดล (ฝั่ง Google ไม่ใช่โควตาหมด) — ลองใหม่ในอีกราว ${waitMin} นาที`
+      : h.status === 'degraded' && !quotaDead ? `🟡 Gemini บางโมเดลล้นชั่วคราว ระบบข้ามไปใช้โมเดลอื่นให้เอง (${h.usable}/${h.total} ช่อง) — ใช้ได้ตามปกติ`
       : h.status === 'degraded' ? `🟡 โควตา AI เต็มไปบางส่วน แต่ยังใช้ได้ (${h.usable}/${h.total} ช่อง) — รีเซ็ตราว ${fmtClock(h.resetAt)} น.`
       : h.status === 'exhausted' ? `🔴 โควตา AI ฟรีของวันนี้หมดแล้ว — รีเซ็ตราว ${fmtClock(h.resetAt)} น. หรือใส่ key ส่วนตัวเพื่อใช้ต่อได้ทันที`
       : '⚪ เซิร์ฟเวอร์กลางยังไม่ได้ตั้งค่า key';
