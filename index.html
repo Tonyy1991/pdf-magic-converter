@@ -480,6 +480,41 @@
   footer { text-align: center; margin-top: 36px; animation: fade-up 0.8s 0.3s ease both; }
   footer .foot-title { color: var(--text-dim); font-size: 0.85rem; font-weight: 300; margin-bottom: 12px; }
 
+  /* ========== ปุ่มติดตั้งเป็นแอปมือถือ ========== */
+  .install-btn {
+    position: fixed; right: max(16px, env(safe-area-inset-right));
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    z-index: 60; display: none; align-items: center; gap: 8px;
+    padding: 13px 20px; border: none; border-radius: 999px; cursor: pointer;
+    font-family: inherit; font-size: 0.95rem; font-weight: 500; color: #fff;
+    background: linear-gradient(135deg, var(--accent1), var(--accent2));
+    box-shadow: 0 12px 32px -8px var(--accent1);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s;
+    animation: fade-up 0.5s ease both;
+  }
+  .install-btn.show { display: inline-flex; }
+  .install-btn:hover { transform: translateY(-3px) scale(1.03); box-shadow: 0 16px 40px -8px var(--accent2); }
+  /* กล่องสอนติดตั้งบน iPhone/iPad (iOS ไม่มี prompt ให้เว็บเรียกเอง) */
+  .ios-sheet {
+    position: fixed; inset: 0; z-index: 70; display: none;
+    align-items: flex-end; justify-content: center;
+    background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(4px);
+  }
+  .ios-sheet.show { display: flex; }
+  .ios-sheet-card {
+    width: min(440px, 100%); margin: 0 10px calc(14px + env(safe-area-inset-bottom));
+    padding: 24px 22px; border-radius: 22px;
+    background: var(--bg); border: 1px solid var(--glass-border);
+    color: var(--text); animation: fade-up 0.35s ease both;
+  }
+  .ios-sheet-card h3 { font-size: 1.05rem; margin-bottom: 14px; }
+  .ios-sheet-card ol { margin: 0 0 16px 1.2em; display: grid; gap: 9px; font-size: 0.92rem; font-weight: 300; }
+  .ios-sheet-card .ios-close {
+    width: 100%; padding: 12px; border: none; border-radius: 14px; cursor: pointer;
+    font-family: inherit; font-size: 0.95rem; font-weight: 500; color: #fff;
+    background: linear-gradient(135deg, var(--accent1), var(--accent2));
+  }
+
   /* ========== เทคนิค 7: Responsive (มือถือสวยเท่าเดสก์ท็อป) ========== */
   @media (max-width: 560px) {
     /* รองรับจอมีรอยบาก (iPhone/Android รุ่นใหม่) */
@@ -662,6 +697,21 @@
       <span class="badge">7️⃣ Responsive Design</span>
     </div>
   </footer>
+</div>
+
+<!-- ปุ่มติดตั้งเป็นแอป: โผล่เฉพาะเมื่อเครื่องติดตั้งได้และยังไม่ได้ติดตั้ง -->
+<button class="install-btn" id="installBtn">📲 ติดตั้งแอป</button>
+<div class="ios-sheet" id="iosSheet">
+  <div class="ios-sheet-card">
+    <h3>📲 ติดตั้งลงหน้าจอ iPhone/iPad</h3>
+    <ol>
+      <li>เปิดเว็บนี้ด้วย <b>Safari</b> (เบราว์เซอร์อื่นติดตั้งไม่ได้)</li>
+      <li>แตะปุ่ม <b>แชร์</b> (ไอคอนสี่เหลี่ยมมีลูกศรชี้ขึ้น) ที่แถบด้านล่าง</li>
+      <li>เลื่อนลง แตะ <b>"เพิ่มลงหน้าจอโฮม" (Add to Home Screen)</b></li>
+      <li>แตะ <b>"เพิ่ม"</b> — ไอคอน PDF Magic จะไปอยู่หน้าจอเหมือนแอปทั่วไป</li>
+    </ol>
+    <button class="ios-close" id="iosClose">เข้าใจแล้ว</button>
+  </div>
 </div>
 
 <script>
@@ -1712,6 +1762,43 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW ไม่ทำงาน:', e));
   });
 }
+
+/* ---------- PWA: ปุ่มติดตั้งแอปบนมือถือ ---------- */
+(() => {
+  const btn = $('installBtn');
+  const sheet = $('iosSheet');
+  // เปิดจากไอคอนแอปอยู่แล้ว → ไม่ต้องชวนติดตั้งซ้ำ
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  if (standalone) return;
+
+  let deferredPrompt = null;
+  // Android/Chrome/Edge: เบราว์เซอร์ยิง event นี้เมื่อเว็บผ่านเกณฑ์ติดตั้งได้
+  addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    btn.classList.add('show');
+  });
+
+  // iOS ไม่มี beforeinstallprompt → โชว์ปุ่มไว้สอนวิธีเพิ่มลงหน้าจอโฮม
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPad สมัยใหม่ปลอมตัวเป็น Mac
+  if (isIOS) btn.classList.add('show');
+
+  btn.addEventListener('click', async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      if (outcome === 'accepted') btn.classList.remove('show');
+    } else if (isIOS) {
+      sheet.classList.add('show');
+    }
+  });
+  $('iosClose').addEventListener('click', () => sheet.classList.remove('show'));
+  sheet.addEventListener('click', (e) => { if (e.target === sheet) sheet.classList.remove('show'); });
+
+  addEventListener('appinstalled', () => btn.classList.remove('show'));
+})();
 </script>
 </body>
 </html>
